@@ -1,0 +1,11 @@
+jwtknife
+*.bin
+*.out
+*.log
+.DS_Store
+.env
+.env.*
+.vscode
+.idea
+hashcat.potfile
+*.hashcat
