@@ -52,7 +52,8 @@ type JWTInfo struct {
 type AttackResult struct {
 	ID      string
 	Outcome Outcome
-	Note    string
+	Note    string            // optional human note
+	Notes   map[string]string // machine-readable extras (forged_jwt, secret, etc)
 	Errors  []string
 	Steps   []Step
 }
@@ -73,5 +74,8 @@ func NewBaseline() *Baseline {
 }
 
 func NewAttackResult(id string) AttackResult {
-	return AttackResult{ID: id}
+	return AttackResult{
+		ID:    id,
+		Notes: map[string]string{},
+	}
 }
