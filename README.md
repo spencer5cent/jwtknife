@@ -139,6 +139,18 @@ Repository Status
 	•	Designed to evolve (POST/PUT support planned)
 
 ⸻
+PortSwigger JWT Labs Coverage
+
+- [x] JWT authentication bypass via unverified signature  
+- [x] JWT authentication bypass via flawed signature verification  
+- [x] JWT authentication bypass via weak signing key  
+- [x] JWT authentication bypass via jwk header injection  
+- [ ] JWT authentication bypass via jku header injection  
+- [ ] JWT authentication bypass via kid header path traversal  
+- [ ] JWT authentication bypass via algorithm confusion  
+- [ ] JWT authentication bypass via algorithm confusion with no exposed key
+
+⸻
 
 Credits
 
