@@ -6,6 +6,26 @@ import (
 )
 
 func PrintHuman(w io.Writer, r *Run) {
+	// ===== SUCCESS SHORT-CIRCUIT =====
+	for _, a := range r.JWTAttacks {
+		if a.Outcome == OutcomeSuccess {
+			fmt.Fprintln(w, "\n✅ SUCCESS")
+			fmt.Fprintf(w, "Attack: %s\n", a.ID)
+			if a.Note != "" {
+				fmt.Fprintf(w, "Note: %s\n", a.Note)
+			}
+			for _, s := range a.Steps {
+				if s.JWT.Token != "" {
+					fmt.Fprintln(w, "\nForged JWT:")
+					fmt.Fprintln(w, s.JWT.Token)
+				}
+			}
+			fmt.Fprintln(w)
+			return
+		}
+	}
+
+	// ===== NORMAL REPORT (only if no success) =====
 	fmt.Fprintln(w, "\n=== jwtknife report ===")
 	fmt.Fprintf(w, "Started: %v\n", r.StartedAt)
 
@@ -13,12 +33,6 @@ func PrintHuman(w io.Writer, r *Run) {
 	fmt.Fprintf(w, "  alg: %s\n", r.JWT.Alg)
 	if r.JWT.HasKid {
 		fmt.Fprintf(w, "  kid: %s\n", r.JWT.Kid)
-	}
-	if r.JWT.HasJKU {
-		fmt.Fprintf(w, "  jku: %s\n", r.JWT.JKU)
-	}
-	if r.JWT.HasJWK {
-		fmt.Fprintln(w, "  jwk: present")
 	}
 
 	fmt.Fprintln(w, "\n[Baseline]")
@@ -45,17 +59,8 @@ func PrintHuman(w io.Writer, r *Run) {
 		if a.Note != "" {
 			fmt.Fprintf(w, "    note: %s\n", a.Note)
 		}
-		for _, s := range a.Steps {
-			fmt.Fprintf(w, "    step: %s (%s)\n", s.Label, s.Details)
-			if s.HTTP != nil && s.HTTP.Err == "" {
-				fmt.Fprintf(w, "      http: %d (%d bytes)\n", s.HTTP.Status, s.HTTP.BodyLen)
-			}
-		}
 	}
 
 	fmt.Fprintf(w, "\nAuth state: %s\n", r.AuthState)
-	if r.CallbackBaseURL != "" {
-		fmt.Fprintf(w, "Callback base URL: %s\n", r.CallbackBaseURL)
-	}
 	fmt.Fprintln(w, "=======================\n")
 }
