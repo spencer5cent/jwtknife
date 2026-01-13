@@ -147,14 +147,52 @@ func Run(cfg Config, in io.Reader, out io.Writer) (*report.Run, error) {
 	cb = strings.TrimSpace(cb)
 
 	if cb != "" {
-		if _, err := url.ParseRequestURI(cb); err == nil {
+		if _, err := url.ParseRequestURI(cb); err != nil {
+			fmt.Fprintln(out, "Invalid URL format, skipping JKU attack.")
+		} else {
 			input.Callback = cb
 			run.CallbackBaseURL = cb
 
 			final := jkuAttack.Run(input)
-			run.JWTAttacks = append(run.JWTAttacks, final)
-		} else {
-			fmt.Fprintln(out, "Invalid URL format, skipping JKU attack.")
+
+			// Extract forged JWT if present
+			var forged string
+			for _, s := range final.Steps {
+				if s.Label == "forged-jku-jwt" && s.JWT.Token != "" {
+					forged = s.JWT.Token
+					break
+				}
+			}
+
+			if forged != "" {
+				fmt.Fprintln(out, "\nForged JKU JWT ready.")
+				fmt.Fprintln(out, "Choose next action:")
+				fmt.Fprintln(out, "  1) Send admin request now")
+				fmt.Fprintln(out, "  2) Show forged JWT only")
+				fmt.Fprintln(out, "  3) Do nothing / skip")
+				fmt.Fprint(out, "Choose [1-3]: ")
+
+				choice, _ := rd.ReadString('\n')
+				choice = strings.TrimSpace(choice)
+
+				switch choice {
+				case "2":
+					fmt.Fprintln(out, "\nForged JWT:")
+					fmt.Fprintln(out, forged)
+					run.JWTAttacks = append(run.JWTAttacks, final)
+
+				case "3":
+					fmt.Fprintln(out, "Skipping JKU request execution.")
+					run.JWTAttacks = append(run.JWTAttacks, final)
+
+				default:
+					// Default behavior: send request (already executed inside attack)
+					run.JWTAttacks = append(run.JWTAttacks, final)
+				}
+			} else {
+				// No forged token produced (should not normally happen)
+				run.JWTAttacks = append(run.JWTAttacks, final)
+			}
 		}
 	}
 
