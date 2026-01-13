@@ -125,7 +125,50 @@ func Run(cfg Config, in io.Reader, out io.Writer) (*report.Run, error) {
 		jwta.NewUnverifiedSignatureAttack().Run(input),
 		jwta.NewAlgNoneAttack().Run(input),
 		jwta.NewWeakHMACAttack().Run(input),
-		jwta.NewJWKHeaderAttack().Run(input),
+	}
+
+	// ===== Phase 2: JWK (interactive) =====
+	fmt.Fprintln(out, "\n[JWK] JWT JWK header injection")
+
+	jwkAttack := jwta.NewJWKHeaderAttack()
+	finalJWK := jwkAttack.Run(input)
+
+	// Extract forged JWT if present
+	var forgedJWK string
+	for _, s := range finalJWK.Steps {
+		if s.JWT.Token != "" {
+			forgedJWK = s.JWT.Token
+			break
+		}
+	}
+
+	if forgedJWK != "" {
+		fmt.Fprintln(out, "\nForged JWK JWT ready.")
+		fmt.Fprintln(out, "Choose next action:")
+		fmt.Fprintln(out, "  1) Send admin request now")
+		fmt.Fprintln(out, "  2) Show forged JWT only")
+		fmt.Fprintln(out, "  3) Do nothing / skip")
+		fmt.Fprint(out, "Choose [1-3]: ")
+
+		choice, _ := rd.ReadString('\n')
+		choice = strings.TrimSpace(choice)
+
+		switch choice {
+		case "2":
+			fmt.Fprintln(out, "\nForged JWT:")
+			fmt.Fprintln(out, forgedJWK)
+			run.JWTAttacks = append(run.JWTAttacks, finalJWK)
+
+		case "3":
+			fmt.Fprintln(out, "Skipping JWK request execution.")
+			run.JWTAttacks = append(run.JWTAttacks, finalJWK)
+
+		default:
+			// Default behavior: send request (already executed inside attack)
+			run.JWTAttacks = append(run.JWTAttacks, finalJWK)
+		}
+	} else {
+		run.JWTAttacks = append(run.JWTAttacks, finalJWK)
 	}
 
 	// ===== Phase 2: JKU (interactive) =====
