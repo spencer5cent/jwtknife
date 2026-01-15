@@ -1,8 +1,9 @@
 JWTKnife
 
-JWTKnife is an interactive offensive security tool for testing JSON Web Token (JWT) authentication implementations. It is designed for learning, lab solving (e.g. PortSwigger Web Security Academy), and real-world security testing where JWT-based access control is in use.
+JWTKnife is an interactive offensive security tool for testing JSON Web Token (JWT) authentication implementations.
+It is designed for learning, lab solving (e.g. PortSwigger Web Security Academy), and real-world security testing where JWT-based access control is in use.
 
-The tool focuses on logic flaws and cryptographic weaknesses rather than brute-force endpoint scanning.
+JWTKnife focuses on logic flaws and cryptographic weaknesses, not endpoint brute-forcing or mass scanning.
 
 ⸻
 
@@ -11,11 +12,11 @@ What JWTKnife Does
 JWTKnife walks the tester through a structured JWT attack workflow:
 	1.	Parses and inspects a supplied JWT
 	2.	Establishes baseline access behavior
-	3.	Attempts common JWT authentication bypass techniques
-	4.	Detects weak HMAC secrets and forges admin tokens
-	5.	Outputs forged tokens for manual or automated use
+	3.	Automatically attempts common JWT authentication bypass techniques
+	4.	Detects weak cryptographic assumptions and forges alternative tokens
+	5.	Reports what actually worked, conservatively and repeatably
 
-JWTKnife does not blindly send destructive requests. It gives the operator control over what happens after a token is forged.
+JWTKnife is intentionally operator-driven — it does not guess, assume success, or silently perform destructive actions.
 
 ⸻
 
@@ -28,102 +29,94 @@ JWTKnife sends three baseline requests using the original JWT:
 	•	Authenticated (JWT required)
 	•	Admin-only endpoint
 
-This establishes expected behavior and helps determine whether later attacks succeed.
+This establishes expected behavior and prevents false positives in later phases.
 
 ⸻
 
 Phase 1 — JWT Authentication Attacks
 
-JWTKnife automatically attempts common JWT auth bypass techniques:
+JWTKnife automatically attempts common JWT auth bypass techniques, including:
 	•	Unverified signature attacks
 	•	alg=none attacks
-	•	Claim escalation attempts (sub, role-like values)
+	•	RSA → HMAC algorithm confusion
+	•	JWK header injection
+	•	JKU header injection (user-assisted)
+	•	kid header manipulation
 
-Each attempt is evaluated and reported with HTTP status and response characteristics.
+Each attempt is evaluated relative to the baseline, not guessed based on endpoint names.
+
+Success is only reported when clear authorization changes occur (2xx or meaningful 3xx differences).
 
 ⸻
 
 Phase 2/3 — Weak HMAC Secret Recovery (HS256 / HS384 / HS512)
 
-If the JWT uses an HMAC algorithm and signature enforcement is detected, JWTKnife offers to attempt secret recovery.
+If the JWT uses an HMAC algorithm and signature enforcement is detected, JWTKnife can attempt secret recovery.
 
 You can choose:
 	1.	Built-in common JWT secrets
-	2.	A custom wordlist (via hashcat)
+	2.	A custom wordlist (via hashcat integration)
 	3.	Skip cracking entirely
 
-If a secret is recovered, JWTKnife automatically forges a new JWT with escalated privileges (e.g. sub=administrator) and prints it.
+If a secret is recovered, JWTKnife forges a cryptographically valid JWT with escalated claims and reports it.
 
-This forged token is cryptographically valid.
+⸻
+
+Algorithm Confusion Support (Real-World Safe)
+
+JWTKnife detects asymmetric JWTs (RS* / ES*) and attempts algorithm confusion safely:
+	•	Discovers public keys via:
+	•	/jwks.json
+	•	/.well-known/jwks.json
+	•	OpenID discovery (jwks_uri)
+	•	Tries multiple real-world HMAC interpretations:
+	•	Raw PEM
+	•	Base64-encoded PEM
+	•	Tests multiple admin-style identities (administrator, admin, etc.)
+	•	Verifies success against baseline responses
+
+Lab-specific behavior is clearly labeled, never assumed.
 
 ⸻
 
 JWT Placement Support
 
-JWTKnife supports the most common JWT transport mechanisms:
-	•	Authorization header (Authorization: Bearer <token>)
+JWTKnife supports common JWT transport mechanisms:
+	•	Authorization: Bearer <token>
 	•	Cookies
 	•	Custom headers
 
-The tool asks where the JWT is sent and injects it correctly for all test requests.
+The tool asks once and injects correctly for all requests.
 
 ⸻
 
-Post-Forged Token Workflow (By Design)
+Post-Exploit Behavior (By Design)
 
-JWTKnife does not automatically perform destructive admin actions.
+JWTKnife does not automatically perform destructive actions.
 
-Instead, it intentionally:
-	•	Prints the forged admin JWT
-	•	Leaves final usage to the tester
+Instead, it:
+	•	Prints the forged JWT
+	•	Shows the HTTP response that proved success
+	•	Leaves final actions to the operator
 
-This design allows you to:
-	•	Paste the token into Burp
-	•	Replay requests manually
-	•	Use the token in other tools
-	•	Solve labs cleanly without surprises
-
-This keeps the tool safe, predictable, and flexible.
-
-⸻
-
-Why Raw HTTP Requests Were Removed
-
-Earlier versions experimented with pasting raw HTTP requests directly into the terminal.
-
-This was removed because:
-	•	It is unsafe UX (can accidentally execute shell input)
-	•	It causes terminal parsing issues
-	•	File-based or post-forge usage is safer and clearer
-
-Future support, if added, will be file-based, not inline pasting.
-
-⸻
-
-Typical Use Cases
-	•	PortSwigger JWT labs
-	•	Learning JWT attack patterns
-	•	Testing internal applications
-	•	Bug bounty JWT triage
-	•	Red team tooling
-	•	Teaching JWT security concepts
+This allows safe usage with Burp, curl, browsers, or other tooling.
 
 ⸻
 
 What JWTKnife Is NOT
-	•	Not an automated exploit framework
-	•	Not a brute-force web scanner
-	•	Not a replacement for Burp
-	•	Not a mass vulnerability scanner
+	•	❌ Not a mass vulnerability scanner
+	•	❌ Not a brute-force web fuzzer
+	•	❌ Not a Burp replacement
+	•	❌ Not an auto-exploitation framework
 
-JWTKnife is intentionally focused and opinionated.
+JWTKnife is focused, conservative, and transparent by design.
 
 ⸻
 
 Security & Ethics
 
 JWTKnife is intended for:
-	•	Authorized testing
+	•	Authorized security testing
 	•	Labs and learning environments
 	•	Security research
 	•	Defensive validation
@@ -135,24 +128,24 @@ Do not use against systems you do not own or have permission to test.
 Repository Status
 	•	Private repository
 	•	Actively developed
-	•	Built for clarity and correctness over speed
-	•	Designed to evolve (POST/PUT support planned)
+	•	Built for correctness over speed
+	•	Designed to evolve (method expansion planned)
 
 ⸻
-PortSwigger JWT Labs Coverage
 
-- [x] JWT authentication bypass via unverified signature  
-- [x] JWT authentication bypass via flawed signature verification  
-- [x] JWT authentication bypass via weak signing key  
-- [x] JWT authentication bypass via jwk header injection  
-- [ ] JWT authentication bypass via jku header injection  
-- [ ] JWT authentication bypass via kid header path traversal  
-- [ ] JWT authentication bypass via algorithm confusion  
-- [ ] JWT authentication bypass via algorithm confusion with no exposed key
+JWT Lab Coverage (Reference)
+	•	Unverified signature
+	•	alg=none
+	•	Weak HMAC signing key
+	•	JWK header injection
+	•	Algorithm confusion (RSA → HMAC)
+	•	Algorithm confusion with JWKS discovery
+	•	[~] JKU header injection (requires hosted JWKS)
+	•	[~] kid path traversal (target-dependent)
 
 ⸻
 
 Credits
 
 Built by spencer5cent
-With iterative design, testing, and refinement through real-world JWT lab solving.
+Through iterative design, debugging, and real-world JWT attack validation.
