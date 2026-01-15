@@ -19,6 +19,11 @@ func PrintHuman(w io.Writer, r *Run) {
 					fmt.Fprintln(w, "\nForged JWT:")
 					fmt.Fprintln(w, s.JWT.Token)
 				}
+
+				if s.HTTP != nil {
+					fmt.Fprintln(w, "\nHTTP request / response for successful step:")
+					fmt.Fprintf(w, "%+v\n", *s.HTTP)
+				}
 			}
 			fmt.Fprintln(w)
 			return

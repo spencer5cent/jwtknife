@@ -59,10 +59,18 @@ type AttackResult struct {
 }
 
 type Step struct {
-	Label   string
-	Details string
-	HTTP    *HTTPObs
-	JWT     JWTInfo
+	Label     string
+	Details   string
+	HTTP      *HTTPObs // primary request/response
+	ReuseHTTP *HTTPObs // optional post-exploit reuse check
+	JWT       JWTInfo  // forged or mutated JWT
+
+	// Variant identifies how the JWT was constructed or abused
+	// examples: "raw-pem", "base64-pem", "es256-confusion"
+	Variant string
+
+	// True if this technique is known to be lab-style or highly artificial
+	LabSpecific bool
 }
 
 func NewRun(t time.Time) *Run {

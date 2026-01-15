@@ -27,6 +27,14 @@ type Targets struct {
 	Placement JWTPlacement
 }
 
+type RequestPlan struct {
+	Label     string
+	URL       string
+	Method    string
+	JWT       string
+	Placement JWTPlacement
+}
+
 type ClientOpts struct {
 	Timeout         time.Duration
 	FollowRedirects bool
@@ -50,20 +58,17 @@ func NewClient(o ClientOpts) *Client {
 	return &Client{hc: h, opts: o}
 }
 
-type RequestPlan struct {
-	Label     string
-	URL       string
-	Method    string
-	JWT       string
-	Placement JWTPlacement
-}
-
 type Result struct {
 	Label    string
 	Status   int
 	BodyLen  int
+	Body     []byte
 	Duration time.Duration
 	Err      string
+}
+
+func (r Result) BodyText() string {
+	return string(r.Body)
 }
 
 func (c *Client) Do(p RequestPlan) Result {
@@ -97,6 +102,7 @@ func (c *Client) Do(p RequestPlan) Result {
 		Label:    p.Label,
 		Status:   resp.StatusCode,
 		BodyLen:  len(b),
+		Body:     b,
 		Duration: time.Since(start),
 	}
 }

