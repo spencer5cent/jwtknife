@@ -69,7 +69,7 @@ func ParseRawRequest(raw string) (*RawRequest, error) {
 
 func (c *Client) DoRaw(r *RawRequest) Result {
 	if c.opts.NoHTTP || c.opts.DryRun {
-		return Result{Label: "raw-request"}
+		return Result{Label: "raw-request", Body: nil}
 	}
 
 	req, err := http.NewRequest(r.Method, r.URL, bytes.NewReader(r.Body))
@@ -96,6 +96,7 @@ func (c *Client) DoRaw(r *RawRequest) Result {
 	return Result{
 		Label:    "raw-request",
 		Status:   resp.StatusCode,
+		Body:     b,
 		BodyLen:  len(b),
 		Duration: time.Since(start),
 	}

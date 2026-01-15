@@ -20,11 +20,9 @@ func Run(cfg Config, in io.Reader, out io.Writer) (*report.Run, error) {
 	fmt.Fprintln(out, "jwtknife – JWT auth testing wizard\n")
 
 	// ===== JWT input =====
-	if strings.TrimSpace(cfg.RawJWT) == "" {
-		fmt.Fprint(out, "Paste the JWT (you can include 'Bearer '): ")
-		j, _ := rd.ReadString('\n')
-		cfg.RawJWT = strings.TrimSpace(j)
-	}
+	fmt.Fprint(out, "Paste the JWT (you can include 'Bearer '): ")
+	j, _ := rd.ReadString('\n')
+	cfg.RawJWT = strings.TrimSpace(j)
 	cfg.RawJWT = strings.TrimPrefix(cfg.RawJWT, "Bearer ")
 
 	parsed, err := jwtknifejwt.Parse(cfg.RawJWT)
@@ -124,6 +122,7 @@ func Run(cfg Config, in io.Reader, out io.Writer) (*report.Run, error) {
 	run.JWTAttacks = []report.AttackResult{
 		jwta.NewUnverifiedSignatureAttack().Run(input),
 		jwta.NewAlgNoneAttack().Run(input),
+		jwta.NewAlgConfusionAttack().Run(input),
 		jwta.NewWeakHMACAttack().Run(input),
 	}
 
@@ -237,6 +236,40 @@ func Run(cfg Config, in io.Reader, out io.Writer) (*report.Run, error) {
 				run.JWTAttacks = append(run.JWTAttacks, final)
 			}
 		}
+	}
+
+	// ===== Phase 3: KID path traversal =====
+	fmt.Fprintln(out, "\n[KID] JWT kid header path traversal")
+	fmt.Fprintln(out, "Do you want to try kid path traversal?")
+	fmt.Fprintln(out, "  1) Automatic payloads")
+	fmt.Fprintln(out, "  2) Custom kid value")
+	fmt.Fprintln(out, "  3) Skip")
+	fmt.Fprint(out, "Choose [1-3]: ")
+
+	kidChoice, _ := rd.ReadString('\n')
+	kidChoice = strings.TrimSpace(kidChoice)
+
+	switch kidChoice {
+	case "1":
+		res := jwta.NewKidTraversalAttack().Run(input)
+		run.JWTAttacks = append(run.JWTAttacks, res)
+
+	case "2":
+		fmt.Fprint(out, "Enter custom kid value: ")
+		kidVal, _ := rd.ReadString('\n')
+		kidVal = strings.TrimSpace(kidVal)
+
+		if kidVal != "" {
+			customInput := input
+			customInput.CustomKID = kidVal
+			res := jwta.NewKidTraversalAttack().Run(customInput)
+			run.JWTAttacks = append(run.JWTAttacks, res)
+		} else {
+			fmt.Fprintln(out, "Empty kid value, skipping.")
+		}
+
+	default:
+		fmt.Fprintln(out, "Skipping kid traversal.")
 	}
 
 	run.AuthState = report.EvaluateAuthState(run.Baseline, run.JWTAttacks)
