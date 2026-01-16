@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"io"
 	"net/url"
+	"os"
+	"regexp"
 	"strings"
 	"time"
 
@@ -19,11 +21,41 @@ func Run(cfg Config, in io.Reader, out io.Writer) (*report.Run, error) {
 
 	fmt.Fprintln(out, "jwtknife – JWT auth testing wizard\n")
 
-	// ===== JWT input =====
-	fmt.Fprint(out, "Paste the JWT (you can include 'Bearer '): ")
-	j, _ := rd.ReadString('\n')
-	cfg.RawJWT = strings.TrimSpace(j)
-	cfg.RawJWT = strings.TrimPrefix(cfg.RawJWT, "Bearer ")
+	// ===== JWT input mode selection =====
+	fmt.Fprintln(out, "How do you want to provide the JWT?")
+	fmt.Fprintln(out, "  1) Paste JWT into terminal")
+	fmt.Fprintln(out, "  2) Read JWT from file")
+	fmt.Fprint(out, "Choose [1-2]: ")
+
+	modeChoice, _ := rd.ReadString('\n')
+	modeChoice = strings.TrimSpace(modeChoice)
+
+	var jwtInput string
+	if modeChoice == "2" {
+		fmt.Fprint(out, "Path to file containing JWT: ")
+		path, _ := rd.ReadString('\n')
+		path = strings.TrimSpace(path)
+
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return nil, err
+		}
+		content := strings.TrimSpace(string(data))
+
+		re := regexp.MustCompile(`[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+`)
+		match := re.FindString(content)
+		if match == "" {
+			return nil, fmt.Errorf("no JWT found in file")
+		}
+		jwtInput = match
+	} else {
+		// Existing paste behavior
+		fmt.Fprint(out, "Paste the JWT (you can include 'Bearer '): ")
+		j, _ := rd.ReadString('\n')
+		jwtInput = strings.TrimSpace(j)
+	}
+
+	cfg.RawJWT = strings.TrimPrefix(jwtInput, "Bearer ")
 
 	parsed, err := jwtknifejwt.Parse(cfg.RawJWT)
 	if err != nil {
