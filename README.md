@@ -149,3 +149,164 @@ Credits
 
 Built by spencer5cent
 Through iterative design, debugging, and real-world JWT attack validation.
+JWTKnife
+
+JWTKnife is an interactive offensive security tool for testing JSON Web Token (JWT) authentication implementations.
+It is designed for learning, lab solving (e.g. PortSwigger Web Security Academy), and real-world security testing where JWT-based access control is in use.
+
+JWTKnife focuses on logic flaws and cryptographic weaknesses, not endpoint brute-forcing or mass scanning.
+
+⸻
+
+What JWTKnife Does
+
+JWTKnife guides the tester through a structured JWT attack workflow:
+1. Parses and inspects one or more JWTs
+2. Establishes baseline access behavior
+3. Automatically attempts JWT authentication bypass techniques
+4. Recovers or reuses signing material where possible
+5. Forges and safely validates privileged tokens
+6. Reports what actually worked, conservatively and repeatably
+
+JWTKnife is intentionally operator-driven — it does not guess, assume success, or silently perform destructive actions.
+
+⸻
+
+Attack Phases
+
+Phase 0 — Baseline Requests
+
+JWTKnife establishes baseline behavior using the original JWT:
+• Public endpoint
+• Authenticated endpoint
+• Admin or privilege-escalated endpoint
+
+This prevents false positives and ensures later attacks are evaluated correctly.
+
+⸻
+
+Phase 1 — JWT Authentication Attacks (Automatic)
+
+JWTKnife automatically attempts common JWT auth bypass techniques, including:
+• Unverified signature bypass
+• alg=none bypass
+• Weak HMAC misuse
+• Algorithm confusion (RS*/ES* → HS*)
+• Algorithm confusion with no exposed key (sig2n-style)
+• JWK header injection
+• JKU header injection
+• kid header manipulation
+
+By default, execution short-circuits on the first confirmed success.
+
+Use the `--exhaustive` flag to force all attacks to run regardless of success.
+
+⸻
+
+Algorithm Confusion Support (Advanced)
+
+JWTKnife supports both real-world algorithm confusion variants:
+
+With exposed key:
+• Discovers public keys via:
+  • /jwks.json
+  • /.well-known/jwks.json
+  • OpenID discovery (jwks_uri)
+• Reuses keys as HMAC secrets
+• Tries multiple interpretations (raw PEM, base64 PEM)
+• Tests multiple admin-style identities
+• Verifies success against baseline behavior
+
+Without exposed key (sig2n-style):
+• Accepts two server-issued JWTs
+• Automatically recovers the RSA public key using external tooling
+• Validates the recovered key
+• Forges a valid HS256 admin token
+• Confirms access before reporting success
+
+Lab-specific behavior is clearly labeled and never assumed.
+
+⸻
+
+JWT Input Flexibility
+
+JWTs can be provided via:
+• Terminal paste
+• File input (auto-extracts JWTs)
+• Optional second JWT for advanced alg-confusion attacks
+
+⸻
+
+JWT Placement Support
+
+JWTKnife supports common JWT transport mechanisms:
+• Authorization: Bearer <token>
+• Cookies
+• Custom headers
+
+The tool asks once and injects correctly for all requests.
+
+⸻
+
+Post-Exploit Behavior (By Design)
+
+JWTKnife does not automatically perform destructive actions.
+
+Instead, it:
+• Prints the forged JWT
+• Shows the HTTP response that proved success
+• Leaves final actions to the operator
+
+This keeps usage safe, predictable, and compatible with Burp, curl, browsers, or other tools.
+
+⸻
+
+What JWTKnife Is NOT
+
+• Not a mass vulnerability scanner
+• Not a brute-force web fuzzer
+• Not a Burp replacement
+• Not an auto-exploitation framework
+
+JWTKnife is focused, conservative, and transparent by design.
+
+⸻
+
+Security & Ethics
+
+JWTKnife is intended for:
+• Authorized security testing
+• Labs and learning environments
+• Security research
+• Defensive validation
+
+Do not use against systems you do not own or have permission to test.
+
+⸻
+
+Repository Status
+
+• Private repository
+• Actively developed
+• Built for correctness over speed
+• Designed to evolve
+
+⸻
+
+PortSwigger JWT Lab Coverage
+
+• Unverified signature
+• alg=none
+• Weak HMAC signing key
+• JWK header injection
+• JKU header injection
+• kid header path traversal
+• Algorithm confusion (exposed key)
+• Algorithm confusion (no exposed key / sig2n)
+
+⸻
+
+Credits
+
+Built by spencer5cent
+Through iterative design, debugging, and real-world JWT attack validation.

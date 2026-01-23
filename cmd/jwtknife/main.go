@@ -1,6 +1,7 @@
 package main
 
 import (
+	"flag"
 	"fmt"
 	"os"
 
@@ -9,9 +10,15 @@ import (
 )
 
 func main() {
+	var exhaustive bool
+
+	flag.BoolVar(&exhaustive, "exhaustive", false, "run all attacks even after a successful exploit")
+	flag.Parse()
+
 	cfg := wizard.Config{
-		RawJWT: "",
-		Method: "GET",
+		RawJWT:     "",
+		Method:     "GET",
+		Exhaustive: exhaustive,
 	}
 
 	run, err := wizard.Run(cfg, os.Stdin, os.Stdout)

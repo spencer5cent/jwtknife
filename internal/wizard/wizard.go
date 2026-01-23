@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/url"
 	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"time"
@@ -60,6 +61,48 @@ func Run(cfg Config, in io.Reader, out io.Writer) (*report.Run, error) {
 	parsed, err := jwtknifejwt.Parse(cfg.RawJWT)
 	if err != nil {
 		return nil, err
+	}
+
+	// ===== Optional second JWT (for alg confusion without exposed key) =====
+	fmt.Fprintln(out, "\nDo you have a second JWT issued by the server? (used for alg confusion with no exposed key)")
+	fmt.Fprint(out, "Provide second JWT? [y/N]: ")
+	secondChoice, _ := rd.ReadString('\n')
+	secondChoice = strings.TrimSpace(strings.ToLower(secondChoice))
+
+	if secondChoice == "y" || secondChoice == "yes" {
+		fmt.Fprintln(out, "How do you want to provide the second JWT?")
+		fmt.Fprintln(out, "  1) Paste JWT into terminal")
+		fmt.Fprintln(out, "  2) Read JWT from file")
+		fmt.Fprint(out, "Choose [1-2]: ")
+
+		mode2, _ := rd.ReadString('\n')
+		mode2 = strings.TrimSpace(mode2)
+
+		var secondJWT string
+		if mode2 == "2" {
+			fmt.Fprint(out, "Path to file containing second JWT: ")
+			p, _ := rd.ReadString('\n')
+			p = strings.TrimSpace(p)
+
+			data, err := os.ReadFile(filepath.Clean(p))
+			if err != nil {
+				return nil, err
+			}
+			content := strings.TrimSpace(string(data))
+
+			re := regexp.MustCompile(`[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+`)
+			match := re.FindString(content)
+			if match == "" {
+				return nil, fmt.Errorf("no JWT found in second JWT file")
+			}
+			secondJWT = match
+		} else {
+			fmt.Fprint(out, "Paste the second JWT (you can include 'Bearer '): ")
+			j2, _ := rd.ReadString('\n')
+			secondJWT = strings.TrimSpace(j2)
+		}
+
+		cfg.SecondRawJWT = strings.TrimPrefix(secondJWT, "Bearer ")
 	}
 
 	run := report.NewRun(time.Now())
@@ -126,22 +169,26 @@ func Run(cfg Config, in io.Reader, out io.Writer) (*report.Run, error) {
 		JWT:       cfg.RawJWT,
 		Placement: placement,
 	}))
-	run.Baseline.Admin = report.FromHTTPResult(client.Do(httpx.RequestPlan{
-		Label:     "admin",
-		URL:       adminURL.String(),
-		Method:    "GET",
-		JWT:       cfg.RawJWT,
-		Placement: placement,
-	}))
-
-	// ===== Phase 1: automatic attacks =====
-	fmt.Fprintln(out, "\nPhase 1: JWT auth attacks")
+	// Note: No distinct admin endpoint provided. Privilege escalation will be evaluated against the authenticated endpoint only.
+	if adminURL.String() == authURL.String() {
+		// No distinct admin endpoint provided; reuse auth baseline
+		run.Baseline.Admin = run.Baseline.Auth
+	} else {
+		run.Baseline.Admin = report.FromHTTPResult(client.Do(httpx.RequestPlan{
+			Label:     "admin",
+			URL:       adminURL.String(),
+			Method:    "GET",
+			JWT:       cfg.RawJWT,
+			Placement: placement,
+		}))
+	}
 
 	input := jwta.AttackInput{
-		ParsedJWT: parsed,
-		RawJWT:    cfg.RawJWT,
-		Client:    client,
-		Baseline:  run.Baseline,
+		ParsedJWT:    parsed,
+		RawJWT:       cfg.RawJWT,
+		SecondRawJWT: strings.TrimSpace(cfg.SecondRawJWT),
+		Client:       client,
+		Baseline:     run.Baseline,
 		Targets: httpx.Targets{
 			PublicURL: pubURL.String(),
 			AuthURL:   authURL.String(),
@@ -151,11 +198,32 @@ func Run(cfg Config, in io.Reader, out io.Writer) (*report.Run, error) {
 		},
 	}
 
-	run.JWTAttacks = []report.AttackResult{
-		jwta.NewUnverifiedSignatureAttack().Run(input),
-		jwta.NewAlgNoneAttack().Run(input),
-		jwta.NewAlgConfusionAttack().Run(input),
-		jwta.NewWeakHMACAttack().Run(input),
+	// ===== Phase 1: automatic attacks =====
+	fmt.Fprintln(out, "\nPhase 1: JWT auth attacks")
+
+	run.JWTAttacks = nil
+
+	// If two JWTs are provided, try sig2n-style alg confusion FIRST
+	if input.SecondRawJWT != "" {
+		sig2n := jwta.NewAlgConfusionSig2NAttack()
+		res := sig2n.Run(input)
+		run.JWTAttacks = append(run.JWTAttacks, res)
+
+		if res.Outcome == report.OutcomeSuccess && !cfg.Exhaustive {
+			run.AuthState = report.EvaluateAuthState(run.Baseline, run.JWTAttacks)
+			return run, nil
+		}
+	}
+
+	// Run remaining default attacks
+	for _, atk := range jwta.DefaultAttacks() {
+		res := atk.Run(input)
+		run.JWTAttacks = append(run.JWTAttacks, res)
+
+		if res.Outcome == report.OutcomeSuccess && !cfg.Exhaustive {
+			run.AuthState = report.EvaluateAuthState(run.Baseline, run.JWTAttacks)
+			return run, nil
+		}
 	}
 
 	// ===== Phase 2: JWK (interactive) =====
