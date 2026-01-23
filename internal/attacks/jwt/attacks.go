@@ -19,16 +19,18 @@ func DefaultAttacks() []Attack {
 		NewAlgNoneAttack(),
 		NewWeakHMACAttack(),
 		NewAlgConfusionAttack(),
+		NewAlgConfusionSig2NAttack(),
 	}
 }
 
 type AttackInput struct {
-	ParsedJWT *jwtknifejwt.Parsed
-	RawJWT    string
-	Targets   httpx.Targets
-	Client    *httpx.Client
-	Baseline  *report.Baseline
-	Callback  string
+	ParsedJWT    *jwtknifejwt.Parsed
+	RawJWT       string
+	SecondRawJWT string
+	Targets      httpx.Targets
+	Client       *httpx.Client
+	Baseline     *report.Baseline
+	Callback     string
 
 	// Optional custom inputs for specific attacks
 	CustomKID   string
