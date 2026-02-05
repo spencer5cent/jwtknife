@@ -84,5 +84,3 @@ It’s a focused tool for JWT logic and crypto failures, built to be predictable
 
 JWTKnife is intended for environments you’re authorized to test:
 labs, learning environments, research targets, and defensive validation.
-
-Repository is private and under active development.
