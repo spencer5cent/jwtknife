@@ -255,7 +255,6 @@ JWTKnife does not automatically perform destructive actions.
 
 Instead, it:
 • Prints the forged JWT
-• Shows the HTTP response that proved success
 • Leaves final actions to the operator
 
 This keeps usage safe, predictable, and compatible with Burp, curl, browsers, or other tools.
