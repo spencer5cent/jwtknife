@@ -7,14 +7,15 @@ JWTKnife focuses on logic flaws and cryptographic weaknesses, not endpoint brute
 
 ⸻
 
-What JWTKnife Does
+## What JWTKnife Does
 
 JWTKnife walks the tester through a structured JWT attack workflow:
-	1.	Parses and inspects a supplied JWT
-	2.	Establishes baseline access behavior
-	3.	Automatically attempts common JWT authentication bypass techniques
-	4.	Detects weak cryptographic assumptions and forges alternative tokens
-	5.	Reports what actually worked, conservatively and repeatably
+
+1. Parses and inspects a supplied JWT  
+2. Establishes baseline access behavior  
+3. Automatically attempts common JWT authentication bypass techniques  
+4. Detects weak cryptographic assumptions and forges alternative tokens  
+5. Reports what actually worked, conservatively and repeatably  
 
 JWTKnife is intentionally operator-driven — it does not guess, assume success, or silently perform destructive actions.
 
