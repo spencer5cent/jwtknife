@@ -1,4 +1,4 @@
-#### JWTKnife
+### JWTKnife
 
 JWTKnife is an interactive CLI tool for testing JWT-based authentication and authorization.
 
