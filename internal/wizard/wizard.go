@@ -203,18 +203,6 @@ func Run(cfg Config, in io.Reader, out io.Writer) (*report.Run, error) {
 
 	run.JWTAttacks = nil
 
-	// If two JWTs are provided, try sig2n-style alg confusion FIRST
-	if input.SecondRawJWT != "" {
-		sig2n := jwta.NewAlgConfusionSig2NAttack()
-		res := sig2n.Run(input)
-		run.JWTAttacks = append(run.JWTAttacks, res)
-
-		if res.Outcome == report.OutcomeSuccess && !cfg.Exhaustive {
-			run.AuthState = report.EvaluateAuthState(run.Baseline, run.JWTAttacks)
-			return run, nil
-		}
-	}
-
 	// Run remaining default attacks
 	for _, atk := range jwta.DefaultAttacks() {
 		res := atk.Run(input)
