@@ -141,9 +141,9 @@ func Run(cfg Config, in io.Reader, out io.Writer) (*report.Run, error) {
 	}
 
 	// ===== URLs =====
-	pubURL := readURL(rd, out, "Public URL (no auth required): ")
-	authURL := readURL(rd, out, "JWT-required URL: ")
-	adminURL := readURL(rd, out, "Admin-only URL: ")
+	pubURL := readURL(rd, out, "Unauthenticated URL (accessible without any JWT): ")
+	authURL := readURL(rd, out, "Authenticated URL (accessible with the provided JWT): ")
+	adminURL := readURL(rd, out, "Privilege-escalation target URL (admin or higher-privilege endpoint): ")
 
 	// ===== HTTP client =====
 	client := httpx.NewClient(httpx.ClientOpts{
