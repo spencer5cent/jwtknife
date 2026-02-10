@@ -14,6 +14,13 @@ JWTKnife supports JWTs sent via:
 
 All tests are checked against baseline responses so results reflect real authorization behavior.
 
+JWTKnife requires the following tools:
+	•	Go – to build and run the CLI
+	•	Docker (optional) – required only for the algorithm confusion with no exposed key attack, which uses the portswigger/sig2n helper container internally
+	•	hashcat (optional) – used only for weak HMAC secret testing with a wordlist
+
+Docker is invoked automatically by JWTKnife when needed. You do not need to run sig2n manually.
+
 Usage:
 
 Run the tool and follow the prompts:
