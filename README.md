@@ -22,7 +22,7 @@ JWTKnife requires the following tools:
 - Docker (optional) – required only for the algorithm confusion with no exposed key attack, which uses the portswigger/sig2n helper container internally
 - hashcat (optional) – used only for weak HMAC secret testing with a wordlist
 
-Docker is invoked automatically by JWTKnife when needed. You do not need to run sig2n manually.
+JWTKnife uses Docker automatically when needed (Docker must be running).
 
 ### Example Use  
 *(PortSwigger Lab: JWT authentication bypass via algorithm confusion with no exposed key)*
