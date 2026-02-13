@@ -2,6 +2,9 @@
 
 JWTKnife is an interactive CLI tool for testing JWT-based authentication and authorization.
 
+Install:
+go install github.com/spencer5cent/jwtknife/cmd/jwtknife@v1.0.2
+
 It inspects a JWT, sends baseline requests, and tests common JWT weaknesses such as:
 - alg=none
 - Missing or unverified signatures
