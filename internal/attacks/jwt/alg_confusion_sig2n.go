@@ -10,9 +10,9 @@ import (
 	"strconv"
 	"strings"
 
-	"jwtknife/internal/httpx"
-	"jwtknife/internal/jwtknifejwt"
-	"jwtknife/internal/report"
+	"github.com/spencer5cent/jwtknife/internal/httpx"
+	"github.com/spencer5cent/jwtknife/internal/jwtknifejwt"
+	"github.com/spencer5cent/jwtknife/internal/report"
 )
 
 // AlgConfusionSig2NAttack implements the "no exposed key" RSA alg confusion variant.

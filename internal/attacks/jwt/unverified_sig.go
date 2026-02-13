@@ -3,9 +3,9 @@ package jwt
 import (
 	"strings"
 
-	"jwtknife/internal/httpx"
-	"jwtknife/internal/jwtknifejwt"
-	"jwtknife/internal/report"
+	"github.com/spencer5cent/jwtknife/internal/httpx"
+	"github.com/spencer5cent/jwtknife/internal/jwtknifejwt"
+	"github.com/spencer5cent/jwtknife/internal/report"
 )
 
 type unverifiedSig struct{}
