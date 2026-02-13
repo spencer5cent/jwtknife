@@ -1,4 +1,4 @@
-module jwtknife
+module github.com/spencer5cent/jwtknife
 
 go 1.22
 
