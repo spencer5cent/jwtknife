@@ -8,8 +8,8 @@ import (
 
 	"github.com/golang-jwt/jwt/v5"
 
-	"jwtknife/internal/httpx"
-	"jwtknife/internal/report"
+	"github.com/spencer5cent/jwtknife/internal/httpx"
+	"github.com/spencer5cent/jwtknife/internal/report"
 )
 
 type weakHMAC struct{}

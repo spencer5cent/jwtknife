@@ -3,7 +3,7 @@ package hmac
 import (
 	"github.com/golang-jwt/jwt/v5"
 
-	"jwtknife/internal/jwtknifejwt"
+	"github.com/spencer5cent/jwtknife/internal/jwtknifejwt"
 )
 
 // SignWithSecret returns a newly signed JWT using HS* and the provided secret.

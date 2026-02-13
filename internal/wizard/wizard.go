@@ -11,10 +11,10 @@ import (
 	"strings"
 	"time"
 
-	jwta "jwtknife/internal/attacks/jwt"
-	"jwtknife/internal/httpx"
-	"jwtknife/internal/jwtknifejwt"
-	"jwtknife/internal/report"
+	jwta "github.com/spencer5cent/jwtknife/internal/attacks/jwt"
+	"github.com/spencer5cent/jwtknife/internal/httpx"
+	"github.com/spencer5cent/jwtknife/internal/jwtknifejwt"
+	"github.com/spencer5cent/jwtknife/internal/report"
 )
 
 func Run(cfg Config, in io.Reader, out io.Writer) (*report.Run, error) {
