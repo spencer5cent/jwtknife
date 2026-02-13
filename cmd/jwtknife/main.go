@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"os"
 
-	"jwtknife/internal/report"
-	"jwtknife/internal/wizard"
+	"github.com/spencer5cent/jwtknife/internal/report"
+	"github.com/spencer5cent/jwtknife/internal/wizard"
 )
 
 func main() {
