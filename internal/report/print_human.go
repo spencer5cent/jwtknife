@@ -67,5 +67,6 @@ func PrintHuman(w io.Writer, r *Run) {
 	}
 
 	fmt.Fprintf(w, "\nAuth state: %s\n", r.AuthState)
-	fmt.Fprintln(w, "=======================\n")
+	fmt.Fprintln(w, "=======================")
+	fmt.Fprintln(w)
 }

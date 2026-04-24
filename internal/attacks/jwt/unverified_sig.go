@@ -81,7 +81,7 @@ func (unverifiedSig) Run(in AttackInput) report.AttackResult {
 			r := in.Client.Do(httpx.RequestPlan{
 				Label:     "atk-unverified-escalation",
 				URL:       in.Targets.AdminURL,
-				Method:    "GET",
+				Method:    in.Targets.Method,
 				JWT:       mod,
 				Placement: in.Targets.Placement,
 			})

