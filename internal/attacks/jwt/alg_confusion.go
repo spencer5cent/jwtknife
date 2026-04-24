@@ -16,6 +16,7 @@ import (
 	"os/exec"
 	"strings"
 
+	"github.com/spencer5cent/jwtknife/internal/dockerutil"
 	"github.com/spencer5cent/jwtknife/internal/httpx"
 	"github.com/spencer5cent/jwtknife/internal/jwtknifejwt"
 	"github.com/spencer5cent/jwtknife/internal/report"
@@ -175,6 +176,15 @@ func (AlgConfusionAttack) Run(in AttackInput) report.AttackResult {
 			ar.Note = "No exposed JWKS. Provide a second server-issued JWT to attempt RSA public key derivation (sig2n)."
 			return ar
 		}
+
+		cleanupDocker, err := dockerutil.EnsureAvailable()
+		if err != nil {
+			ar.Outcome = report.OutcomeInteresting
+			ar.Note = "sig2n execution failed or docker unavailable"
+			ar.Errors = append(ar.Errors, err.Error())
+			return ar
+		}
+		defer cleanupDocker()
 
 		cmd := exec.Command(
 			"docker", "run", "--rm", "-i",

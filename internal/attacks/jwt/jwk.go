@@ -85,15 +85,20 @@ func (a *JWKHeaderAttack) Run(in AttackInput) report.AttackResult {
 		HTTP:  report.FromHTTPResult(adminRes),
 	})
 
-	// SUCCESS heuristic: admin endpoints redirect on success
-	if adminRes.Status == 302 {
+	if report.IsAdminSuccess(in.Baseline, res.Steps[0].HTTP) {
 		res.Outcome = report.OutcomeSuccess
 		res.Note = "Admin access confirmed via JWK header injection"
 		return res
 	}
 
-	res.Outcome = report.OutcomeInteresting
-	res.Note = "Forged JWT with embedded JWK header (no admin access)"
+	if report.IsInteresting(in.Baseline, res.Steps[0].HTTP) {
+		res.Outcome = report.OutcomeInteresting
+		res.Note = "Forged JWT with embedded JWK header (no admin access)"
+		return res
+	}
+
+	res.Outcome = report.OutcomeNoEffect
+	res.Note = "No admin access"
 
 	return res
 }

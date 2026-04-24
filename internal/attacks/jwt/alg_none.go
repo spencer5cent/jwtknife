@@ -45,7 +45,7 @@ func (algNone) Run(in AttackInput) report.AttackResult {
 			r := in.Client.Do(httpx.RequestPlan{
 				Label:     "atk-alg-none-escalation",
 				URL:       in.Targets.AdminURL,
-				Method:    "GET",
+				Method:    in.Targets.Method,
 				JWT:       mod,
 				Placement: in.Targets.Placement,
 			})

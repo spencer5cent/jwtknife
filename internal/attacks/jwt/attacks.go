@@ -33,7 +33,8 @@ type AttackInput struct {
 	Callback     string
 
 	// Optional custom inputs for specific attacks
-	CustomKID   string
-	HMACSecret  []byte
-	AllowResign bool
+	CustomKID    string
+	HMACSecret   []byte
+	HMACWordlist string
+	AllowResign  bool
 }

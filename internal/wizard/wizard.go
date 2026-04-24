@@ -20,7 +20,8 @@ import (
 func Run(cfg Config, in io.Reader, out io.Writer) (*report.Run, error) {
 	rd := bufio.NewReader(in)
 
-	fmt.Fprintln(out, "jwtknife – JWT auth testing wizard\n")
+	fmt.Fprintln(out, "jwtknife – JWT auth testing wizard")
+	fmt.Fprintln(out)
 
 	// ===== JWT input mode selection =====
 	fmt.Fprintln(out, "How do you want to provide the JWT?")
@@ -105,12 +106,6 @@ func Run(cfg Config, in io.Reader, out io.Writer) (*report.Run, error) {
 		cfg.SecondRawJWT = strings.TrimPrefix(secondJWT, "Bearer ")
 	}
 
-	run := report.NewRun(time.Now())
-	run.JWT.Raw = cfg.RawJWT
-	run.JWT.Alg = parsed.Alg
-	run.JWT.HasKid = parsed.HasKid
-	run.JWT.Kid = parsed.Kid
-
 	fmt.Fprintf(out, "\nDecoded JWT:\n  alg: %s\n", parsed.Alg)
 	if parsed.HasKid {
 		fmt.Fprintf(out, "  kid: %s\n", parsed.Kid)
@@ -139,229 +134,30 @@ func Run(cfg Config, in io.Reader, out io.Writer) (*report.Run, error) {
 	default:
 		placement = httpx.JWTPlacement{Kind: httpx.PlaceAuthorizationBearer}
 	}
+	cfg.Placement = placement
 
 	// ===== URLs =====
 	pubURL := readURL(rd, out, "Unauthenticated URL (accessible without any JWT): ")
 	authURL := readURL(rd, out, "Authenticated URL (accessible with the provided JWT): ")
 	adminURL := readURL(rd, out, "Privilege-escalation target URL (admin or higher-privilege endpoint): ")
+	cfg.PublicURL = pubURL.String()
+	cfg.AuthURL = authURL.String()
+	cfg.AdminURL = adminURL.String()
+	cfg.RunJWK = true
+	cfg.RunJKU = true
+	cfg.PromptForHMACSecret = false
 
-	// ===== HTTP client =====
-	client := httpx.NewClient(httpx.ClientOpts{
-		Timeout:         10 * time.Second,
-		FollowRedirects: false,
-		MaxRequests:     50,
-	})
-
-	// ===== Baseline =====
-	run.Baseline = report.NewBaseline()
-
-	run.Baseline.Public = report.FromHTTPResult(client.Do(httpx.RequestPlan{
-		Label:     "public",
-		URL:       pubURL.String(),
-		Method:    "GET",
-		JWT:       cfg.RawJWT,
-		Placement: placement,
-	}))
-	run.Baseline.Auth = report.FromHTTPResult(client.Do(httpx.RequestPlan{
-		Label:     "auth",
-		URL:       authURL.String(),
-		Method:    "GET",
-		JWT:       cfg.RawJWT,
-		Placement: placement,
-	}))
-	// Note: No distinct admin endpoint provided. Privilege escalation will be evaluated against the authenticated endpoint only.
-	if adminURL.String() == authURL.String() {
-		// No distinct admin endpoint provided; reuse auth baseline
-		run.Baseline.Admin = run.Baseline.Auth
-	} else {
-		run.Baseline.Admin = report.FromHTTPResult(client.Do(httpx.RequestPlan{
-			Label:     "admin",
-			URL:       adminURL.String(),
-			Method:    "GET",
-			JWT:       cfg.RawJWT,
-			Placement: placement,
-		}))
+	if strings.HasPrefix(strings.ToUpper(parsed.Alg), "HS") {
+		fmt.Fprintf(out, "\nThis JWT uses %s\n", parsed.Alg)
+		fmt.Fprint(out, "If you already know or suspect the HMAC secret, enter it now (or press Enter to skip): ")
+		line, _ := rd.ReadString('\n')
+		cfg.HMACSecret = strings.TrimSpace(line)
 	}
 
-	input := jwta.AttackInput{
-		ParsedJWT:    parsed,
-		RawJWT:       cfg.RawJWT,
-		SecondRawJWT: strings.TrimSpace(cfg.SecondRawJWT),
-		Client:       client,
-		Baseline:     run.Baseline,
-		Targets: httpx.Targets{
-			PublicURL: pubURL.String(),
-			AuthURL:   authURL.String(),
-			AdminURL:  adminURL.String(),
-			Method:    "GET",
-			Placement: placement,
-		},
-	}
-
-	// ===== Phase 1: automatic attacks =====
+	// Interactive wizard defaults to the automatic KID traversal payload set.
+	cfg.KIDMode = "auto"
 	fmt.Fprintln(out, "\nPhase 1: JWT auth attacks")
-
-	run.JWTAttacks = nil
-
-	// Run remaining default attacks
-	for _, atk := range jwta.DefaultAttacks() {
-		res := atk.Run(input)
-		run.JWTAttacks = append(run.JWTAttacks, res)
-
-		if res.Outcome == report.OutcomeSuccess && !cfg.Exhaustive {
-			run.AuthState = report.EvaluateAuthState(run.Baseline, run.JWTAttacks)
-			return run, nil
-		}
-	}
-
-	// ===== Phase 2: JWK (interactive) =====
-	fmt.Fprintln(out, "\n[JWK] JWT JWK header injection")
-
-	jwkAttack := jwta.NewJWKHeaderAttack()
-	finalJWK := jwkAttack.Run(input)
-
-	// Extract forged JWT if present
-	var forgedJWK string
-	for _, s := range finalJWK.Steps {
-		if s.JWT.Token != "" {
-			forgedJWK = s.JWT.Token
-			break
-		}
-	}
-
-	if forgedJWK != "" {
-		fmt.Fprintln(out, "\nForged JWK JWT ready.")
-		fmt.Fprintln(out, "Choose next action:")
-		fmt.Fprintln(out, "  1) Send admin request now")
-		fmt.Fprintln(out, "  2) Show forged JWT only")
-		fmt.Fprintln(out, "  3) Do nothing / skip")
-		fmt.Fprint(out, "Choose [1-3]: ")
-
-		choice, _ := rd.ReadString('\n')
-		choice = strings.TrimSpace(choice)
-
-		switch choice {
-		case "2":
-			fmt.Fprintln(out, "\nForged JWT:")
-			fmt.Fprintln(out, forgedJWK)
-			run.JWTAttacks = append(run.JWTAttacks, finalJWK)
-
-		case "3":
-			fmt.Fprintln(out, "Skipping JWK request execution.")
-			run.JWTAttacks = append(run.JWTAttacks, finalJWK)
-
-		default:
-			// Default behavior: send request (already executed inside attack)
-			run.JWTAttacks = append(run.JWTAttacks, finalJWK)
-		}
-	} else {
-		run.JWTAttacks = append(run.JWTAttacks, finalJWK)
-	}
-
-	// ===== Phase 2: JKU (interactive) =====
-	fmt.Fprintln(out, "\n[JKU] JWT Key URL (jku) header injection")
-
-	jkuAttack := jwta.NewJKUAttack()
-	preview := jkuAttack.Run(input)
-	run.JWTAttacks = append(run.JWTAttacks, preview)
-
-	for _, s := range preview.Steps {
-		if s.Label == "host-jwks" {
-			fmt.Fprintln(out, "\nSave the following EXACTLY as jwks.json and host it:\n")
-			fmt.Fprintln(out, s.JWT.Token)
-		}
-	}
-
-	fmt.Fprint(out, "\nPaste FULL URL to hosted jwks.json (or press Enter to skip): ")
-	cb, _ := rd.ReadString('\n')
-	cb = strings.TrimSpace(cb)
-
-	if cb != "" {
-		if _, err := url.ParseRequestURI(cb); err != nil {
-			fmt.Fprintln(out, "Invalid URL format, skipping JKU attack.")
-		} else {
-			input.Callback = cb
-			run.CallbackBaseURL = cb
-
-			final := jkuAttack.Run(input)
-
-			// Extract forged JWT if present
-			var forged string
-			for _, s := range final.Steps {
-				if s.Label == "forged-jku-jwt" && s.JWT.Token != "" {
-					forged = s.JWT.Token
-					break
-				}
-			}
-
-			if forged != "" {
-				fmt.Fprintln(out, "\nForged JKU JWT ready.")
-				fmt.Fprintln(out, "Choose next action:")
-				fmt.Fprintln(out, "  1) Send admin request now")
-				fmt.Fprintln(out, "  2) Show forged JWT only")
-				fmt.Fprintln(out, "  3) Do nothing / skip")
-				fmt.Fprint(out, "Choose [1-3]: ")
-
-				choice, _ := rd.ReadString('\n')
-				choice = strings.TrimSpace(choice)
-
-				switch choice {
-				case "2":
-					fmt.Fprintln(out, "\nForged JWT:")
-					fmt.Fprintln(out, forged)
-					run.JWTAttacks = append(run.JWTAttacks, final)
-
-				case "3":
-					fmt.Fprintln(out, "Skipping JKU request execution.")
-					run.JWTAttacks = append(run.JWTAttacks, final)
-
-				default:
-					// Default behavior: send request (already executed inside attack)
-					run.JWTAttacks = append(run.JWTAttacks, final)
-				}
-			} else {
-				// No forged token produced (should not normally happen)
-				run.JWTAttacks = append(run.JWTAttacks, final)
-			}
-		}
-	}
-
-	// ===== Phase 3: KID path traversal =====
-	fmt.Fprintln(out, "\n[KID] JWT kid header path traversal")
-	fmt.Fprintln(out, "Do you want to try kid path traversal?")
-	fmt.Fprintln(out, "  1) Automatic payloads")
-	fmt.Fprintln(out, "  2) Custom kid value")
-	fmt.Fprintln(out, "  3) Skip")
-	fmt.Fprint(out, "Choose [1-3]: ")
-
-	kidChoice, _ := rd.ReadString('\n')
-	kidChoice = strings.TrimSpace(kidChoice)
-
-	switch kidChoice {
-	case "1":
-		res := jwta.NewKidTraversalAttack().Run(input)
-		run.JWTAttacks = append(run.JWTAttacks, res)
-
-	case "2":
-		fmt.Fprint(out, "Enter custom kid value: ")
-		kidVal, _ := rd.ReadString('\n')
-		kidVal = strings.TrimSpace(kidVal)
-
-		if kidVal != "" {
-			customInput := input
-			customInput.CustomKID = kidVal
-			res := jwta.NewKidTraversalAttack().Run(customInput)
-			run.JWTAttacks = append(run.JWTAttacks, res)
-		} else {
-			fmt.Fprintln(out, "Empty kid value, skipping.")
-		}
-
-	default:
-		fmt.Fprintln(out, "Skipping kid traversal.")
-	}
-
-	run.AuthState = report.EvaluateAuthState(run.Baseline, run.JWTAttacks)
-	return run, nil
+	return Execute(cfg)
 }
 
 func readURL(rd *bufio.Reader, out io.Writer, label string) *url.URL {
@@ -373,5 +169,159 @@ func readURL(rd *bufio.Reader, out io.Writer, label string) *url.URL {
 			return u
 		}
 		fmt.Fprintln(out, "Invalid URL, try again.")
+	}
+}
+
+func Execute(cfg Config) (*report.Run, error) {
+	cfg.Method = normalizeMethod(cfg.Method)
+	cfg.RawJWT = strings.TrimSpace(strings.TrimPrefix(cfg.RawJWT, "Bearer "))
+	cfg.SecondRawJWT = strings.TrimSpace(strings.TrimPrefix(cfg.SecondRawJWT, "Bearer "))
+
+	if cfg.RawJWT == "" {
+		return nil, fmt.Errorf("missing JWT")
+	}
+	if cfg.PublicURL == "" || cfg.AuthURL == "" || cfg.AdminURL == "" {
+		return nil, fmt.Errorf("public, auth, and admin URLs are required")
+	}
+	if err := validatePlacement(cfg.Placement); err != nil {
+		return nil, err
+	}
+	if cfg.CallbackURL != "" {
+		if _, err := url.ParseRequestURI(cfg.CallbackURL); err != nil {
+			return nil, fmt.Errorf("invalid callback URL: %w", err)
+		}
+	}
+
+	parsed, err := jwtknifejwt.Parse(cfg.RawJWT)
+	if err != nil {
+		return nil, err
+	}
+
+	run := report.NewRun(time.Now())
+	run.JWT.Raw = cfg.RawJWT
+	run.JWT.Alg = parsed.Alg
+	run.JWT.Header = parsed.HeaderJSON
+	run.JWT.Payload = parsed.PayloadJSON
+	run.JWT.HasKid = parsed.HasKid
+	run.JWT.Kid = parsed.Kid
+	run.JWT.HasJKU = parsed.HasJKU
+	run.JWT.JKU = parsed.JKU
+	run.JWT.HasJWK = parsed.HasJWK
+
+	client := httpx.NewClient(httpx.ClientOpts{
+		Timeout:         10 * time.Second,
+		FollowRedirects: false,
+		MaxRequests:     50,
+	})
+
+	run.Baseline = report.NewBaseline()
+	run.Baseline.Public = report.FromHTTPResult(client.Do(httpx.RequestPlan{
+		Label:     "public",
+		URL:       cfg.PublicURL,
+		Method:    cfg.Method,
+		JWT:       cfg.RawJWT,
+		Placement: cfg.Placement,
+	}))
+	run.Baseline.Auth = report.FromHTTPResult(client.Do(httpx.RequestPlan{
+		Label:     "auth",
+		URL:       cfg.AuthURL,
+		Method:    cfg.Method,
+		JWT:       cfg.RawJWT,
+		Placement: cfg.Placement,
+	}))
+	if cfg.AdminURL == cfg.AuthURL {
+		run.Baseline.Admin = run.Baseline.Auth
+	} else {
+		run.Baseline.Admin = report.FromHTTPResult(client.Do(httpx.RequestPlan{
+			Label:     "admin",
+			URL:       cfg.AdminURL,
+			Method:    cfg.Method,
+			JWT:       cfg.RawJWT,
+			Placement: cfg.Placement,
+		}))
+	}
+
+	input := jwta.AttackInput{
+		ParsedJWT:    parsed,
+		RawJWT:       cfg.RawJWT,
+		SecondRawJWT: cfg.SecondRawJWT,
+		Client:       client,
+		Baseline:     run.Baseline,
+		Targets: httpx.Targets{
+			PublicURL: cfg.PublicURL,
+			AuthURL:   cfg.AuthURL,
+			AdminURL:  cfg.AdminURL,
+			Method:    cfg.Method,
+			Placement: cfg.Placement,
+		},
+		Callback:     cfg.CallbackURL,
+		HMACSecret:   []byte(cfg.HMACSecret),
+		HMACWordlist: cfg.HMACWordlist,
+		AllowResign:  cfg.PromptForHMACSecret,
+	}
+
+	for _, atk := range jwta.DefaultAttacks() {
+		res := atk.Run(input)
+		run.JWTAttacks = append(run.JWTAttacks, res)
+
+		if res.Outcome == report.OutcomeSuccess && !cfg.Exhaustive {
+			run.AuthState = report.EvaluateAuthState(run.Baseline, run.JWTAttacks)
+			return run, nil
+		}
+	}
+
+	if cfg.RunJWK {
+		run.JWTAttacks = append(run.JWTAttacks, jwta.NewJWKHeaderAttack().Run(input))
+	}
+
+	if cfg.RunJKU {
+		jkuAttack := jwta.NewJKUAttack()
+		if cfg.CallbackURL == "" {
+			run.JWTAttacks = append(run.JWTAttacks, jkuAttack.Run(input))
+		} else {
+			run.CallbackBaseURL = cfg.CallbackURL
+			run.JWTAttacks = append(run.JWTAttacks, jkuAttack.Run(input))
+		}
+	}
+
+	switch strings.ToLower(strings.TrimSpace(cfg.KIDMode)) {
+	case "", "auto":
+		run.JWTAttacks = append(run.JWTAttacks, jwta.NewKidTraversalAttack().Run(input))
+	case "custom":
+		if strings.TrimSpace(cfg.CustomKID) == "" {
+			return nil, fmt.Errorf("kid mode custom requires --kid-value")
+		}
+		customInput := input
+		customInput.CustomKID = strings.TrimSpace(cfg.CustomKID)
+		run.JWTAttacks = append(run.JWTAttacks, jwta.NewKidTraversalAttack().Run(customInput))
+	case "skip":
+		// no-op
+	default:
+		return nil, fmt.Errorf("invalid kid mode %q", cfg.KIDMode)
+	}
+
+	run.AuthState = report.EvaluateAuthState(run.Baseline, run.JWTAttacks)
+	return run, nil
+}
+
+func normalizeMethod(method string) string {
+	m := strings.ToUpper(strings.TrimSpace(method))
+	if m == "" {
+		return "GET"
+	}
+	return m
+}
+
+func validatePlacement(p httpx.JWTPlacement) error {
+	switch p.Kind {
+	case httpx.PlaceAuthorizationBearer:
+		return nil
+	case httpx.PlaceCookie, httpx.PlaceHeader:
+		if strings.TrimSpace(p.Name) == "" {
+			return fmt.Errorf("placement name is required for cookie and header placement")
+		}
+		return nil
+	default:
+		return fmt.Errorf("invalid JWT placement")
 	}
 }
