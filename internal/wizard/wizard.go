@@ -216,10 +216,16 @@ func Execute(cfg Config) (*report.Run, error) {
 
 	run.Baseline = report.NewBaseline()
 	run.Baseline.Public = report.FromHTTPResult(client.Do(httpx.RequestPlan{
-		Label:     "public",
-		URL:       cfg.PublicURL,
-		Method:    cfg.Method,
-		JWT:       cfg.RawJWT,
+		Label: "public",
+		// Compare the exact admin route without and with the token. An
+		// unrelated public URL can differ even when neither request is
+		// authenticated, which is not an authentication boundary.
+		URL:    cfg.AdminURL,
+		Method: cfg.Method,
+		// The public baseline must be genuinely unauthenticated. Sending the
+		// captured JWT here made public and authenticated responses identical
+		// and allowed any ordinary 2xx page to be called "admin success".
+		JWT:       "",
 		Placement: cfg.Placement,
 	}))
 	run.Baseline.Auth = report.FromHTTPResult(client.Do(httpx.RequestPlan{

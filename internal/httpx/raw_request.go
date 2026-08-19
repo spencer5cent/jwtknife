@@ -2,6 +2,8 @@ package httpx
 
 import (
 	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"io"
 	"net/http"
@@ -93,11 +95,14 @@ func (c *Client) DoRaw(r *RawRequest) Result {
 
 	b, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
 
+	sum := sha256.Sum256(b)
 	return Result{
-		Label:    "raw-request",
-		Status:   resp.StatusCode,
-		Body:     b,
-		BodyLen:  len(b),
-		Duration: time.Since(start),
+		Label:                "raw-request",
+		Status:               resp.StatusCode,
+		Body:                 b,
+		BodySHA256:           hex.EncodeToString(sum[:]),
+		BodyNormalizedSHA256: normalizedBodySHA256(b),
+		BodyLen:              len(b),
+		Duration:             time.Since(start),
 	}
 }
