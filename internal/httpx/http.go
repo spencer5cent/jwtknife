@@ -1,8 +1,11 @@
 package httpx
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"io"
 	"net/http"
+	"strings"
 	"time"
 )
 
@@ -59,12 +62,14 @@ func NewClient(o ClientOpts) *Client {
 }
 
 type Result struct {
-	Label    string
-	Status   int
-	BodyLen  int
-	Body     []byte
-	Duration time.Duration
-	Err      string
+	Label                string
+	Status               int
+	BodyLen              int
+	Body                 []byte
+	BodySHA256           string
+	BodyNormalizedSHA256 string
+	Duration             time.Duration
+	Err                  string
 }
 
 func (r Result) BodyText() string {
@@ -81,13 +86,15 @@ func (c *Client) Do(p RequestPlan) Result {
 		return Result{Label: p.Label, Err: err.Error()}
 	}
 
-	switch p.Placement.Kind {
-	case PlaceCookie:
-		req.AddCookie(&http.Cookie{Name: p.Placement.Name, Value: p.JWT})
-	case PlaceHeader:
-		req.Header.Set(p.Placement.Name, p.JWT)
-	default:
-		req.Header.Set("Authorization", "Bearer "+p.JWT)
+	if strings.TrimSpace(p.JWT) != "" {
+		switch p.Placement.Kind {
+		case PlaceCookie:
+			req.AddCookie(&http.Cookie{Name: p.Placement.Name, Value: p.JWT})
+		case PlaceHeader:
+			req.Header.Set(p.Placement.Name, p.JWT)
+		default:
+			req.Header.Set("Authorization", "Bearer "+p.JWT)
+		}
 	}
 
 	start := time.Now()
@@ -98,11 +105,14 @@ func (c *Client) Do(p RequestPlan) Result {
 	defer resp.Body.Close()
 
 	b, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+	sum := sha256.Sum256(b)
 	return Result{
-		Label:    p.Label,
-		Status:   resp.StatusCode,
-		BodyLen:  len(b),
-		Body:     b,
-		Duration: time.Since(start),
+		Label:                p.Label,
+		Status:               resp.StatusCode,
+		BodyLen:              len(b),
+		Body:                 b,
+		BodySHA256:           hex.EncodeToString(sum[:]),
+		BodyNormalizedSHA256: normalizedBodySHA256(b),
+		Duration:             time.Since(start),
 	}
 }

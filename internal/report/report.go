@@ -39,10 +39,12 @@ type Baseline struct {
 }
 
 type HTTPObs struct {
-	Status   int
-	BodyLen  int
-	Duration time.Duration
-	Err      string
+	Status               int
+	BodyLen              int
+	BodySHA256           string
+	BodyNormalizedSHA256 string
+	Duration             time.Duration
+	Err                  string
 }
 
 type JWTInfo struct {
